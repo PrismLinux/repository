@@ -1,0 +1,117 @@
+image: archlinux:latest
+variables:
+  PACKAGE_PROJECT_IDS: "70724583"
+  REPO_NAME: "crystallinux"
+
+pages:
+  stage: deploy
+
+  before_script:
+    - pacman -Syu --noconfirm
+    - pacman -S --noconfirm curl jq base-devel
+
+  script:
+    #    Create the directory structure for the repository website.
+    #    The 'public' directory is the root of the GitLab Pages site.
+    - mkdir -p public/x86_64
+    - echo "Created directory structure at public/x86_64"
+
+    #    --- Download Packages from Releases ---
+    #    Loop through each Project ID defined in the PACKAGE_PROJECT_IDS variable.
+    - |
+      for project_id in $PACKAGE_PROJECT_IDS; do
+        echo "Processing project ID: $project_id"
+
+        # Construct the API URL to fetch the latest release for the project.
+        # GITLAB_TOKEN is needed for private repositories. Add it as a masked CI/CD variable.
+        # It's optional for public repositories, but good practice to use it.
+        API_URL="https://gitlab.com/api/v4/projects/${project_id}/releases/latest"
+
+        # Use the GitLab API to get the download URL for the package.
+        # We parse the JSON to find an asset link ending in ".pkg.tar.zst".
+        DOWNLOAD_URL=$(curl --silent --show-error --header "PRIVATE-TOKEN: $GITLAB_TOKEN" "$API_URL" | jq -r '.assets.links[] | select(.name | endswith(".pkg.tar.zst")) | .url' | head -n 1)
+
+        if [ -z "$DOWNLOAD_URL" ]; then
+          echo "WARNING: No '*.pkg.tar.zst' asset found in the latest release of project $project_id. Skipping."
+          continue
+        fi
+
+        PACKAGE_FILENAME=$(basename "$DOWNLOAD_URL")
+        echo "Found package: $PACKAGE_FILENAME. Downloading from $DOWNLOAD_URL"
+
+        # Download the package file directly into our repository directory.
+        curl --silent --location --output "public/x86_64/$PACKAGE_FILENAME" "$DOWNLOAD_URL"
+      done
+
+    #    --- Create/Update the Repository Database ---
+    #    Change into the directory containing the packages.
+    - |
+      cd public/x86_64
+
+      echo "Updating repository database '${REPO_NAME}.db.tar.gz'..."
+    # 'repo-add' creates or updates the database file with information about all packages.
+    # This database is what 'pacman' uses to find packages.
+    - repo-add "${REPO_NAME}.db.tar.gz" *.pkg.tar.zst
+
+    # Also create the uncompressed database files for compatibility.
+    - cp "${REPO_NAME}.db.tar.gz" "${REPO_NAME}.db"
+    - |
+      cp "${REPO_NAME}.files.tar.gz" "${REPO_NAME}.files"
+
+      echo "Repository database updated successfully."
+    - |
+      cd ../..
+
+    # 5. --- Generate Simple HTML Index Pages ---
+    #    This creates a user-friendly way to browse the repository.
+      echo "Generating index.html files..."
+    # Main index page (index.html)
+    - |
+      cat <<EOF > public/index.html
+      <html>
+        <head><title>${REPO_NAME^} Packages</title></head>
+        <body>
+          <h1>${REPO_NAME^} Packages</h1>
+          <p>This is an Arch Linux package repository hosted on GitLab Pages.</p>
+          <h2>Architectures:</h2>
+          <ul>
+            <li><a href="x86_64/index.html">x86_64</a></li>
+          </ul>
+        </body>
+      </html>
+      EOF
+
+    # Index page for the x86_64 architecture
+    - |
+      cat <<EOF > public/x86_64/index.html
+      <html>
+        <head><title>${REPO_NAME^} Packages (x86_64)</title></head>
+        <body>
+          <h1>Packages for x86_64</h1>
+          <ul>
+      EOF
+
+    # Add a link for each package file to the HTML page.
+    - for pkg in public/x86_64/*.pkg.tar.zst; do
+        echo "      <li><a href=\"$(basename "$pkg")\">$(basename "$pkg")</a></li>" >> public/x86_64/index.html
+      done
+
+    - |
+      cat <<EOF >> public/x86_64/index.html
+          </ul>
+        </body>
+      </html>
+      EOF
+      echo "HTML generation complete."
+
+  artifacts:
+    # Everything inside the 'public' directory will be published to GitLab Pages.
+    paths:
+      - public
+
+  # Define when this job should run.
+  rules:
+    # Run on a schedule (e.g., once a day to check for new packages).
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    # Run whenever there's a push to the main branch.
+    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "master"'
