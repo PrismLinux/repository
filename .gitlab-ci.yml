@@ -61,9 +61,8 @@ pages:
       echo "Repository database updated successfully."
     - |
       cd ../..
-
-    # 5. --- Generate Simple HTML Index Pages ---
-    #    This creates a user-friendly way to browse the repository.
+      #  --- Generate Simple HTML Index Pages ---
+      #    This creates a user-friendly way to browse the repository.
       echo "Generating index.html files..."
     # Main index page (index.html)
     - |
@@ -93,7 +92,7 @@ pages:
 
     # Add a link for each package file to the HTML page.
     - for pkg in public/x86_64/*.pkg.tar.zst; do
-        echo "      <li><a href=\"$(basename "$pkg")\">$(basename "$pkg")</a></li>" >> public/x86_64/index.html
+      echo "      <li><a href=\"$(basename "$pkg")\">$(basename "$pkg")</a></li>" >> public/x86_64/index.html
       done
 
     - |
