@@ -41,36 +41,47 @@ pages:
       echo "Initial contents from cache:"
       ls -R "${REPO_DIR}"
 
-      # --- Step 1: Get a list of ALL expected remote packages ---
+      # --- Step 1: Get a list of ALL expected remote packages from releases ---
       declare -A remote_packages_map # Use an associative array for efficient lookups
-      echo "Fetching list of all available remote packages..."
+      echo "Fetching list of all available remote packages from releases..."
       
       for project_id in $PACKAGE_PROJECT_IDS; do
         echo "--> Checking project ID: ${project_id}"
         
-        PIPELINES_API_URL="https://gitlab.com/api/v4/projects/${project_id}/pipelines?status=success&ref=main&per_page=1"
-        PIPELINE_ID=$(curl --silent --show-error --header "PRIVATE-TOKEN: $GITLAB_TOKEN" "$PIPELINES_API_URL" | jq -r '.[0].id')
+        # Get the latest release
+        RELEASES_API_URL="https://gitlab.com/api/v4/projects/${project_id}/releases"
+        LATEST_RELEASE=$(curl --silent --show-error --header "PRIVATE-TOKEN: $GITLAB_TOKEN" "$RELEASES_API_URL" | jq -r '.[0]')
         
-        if [ "$PIPELINE_ID" = "null" ]; then
-          echo "WARNING: No successful pipeline found for project ${project_id}. Skipping."
+        if [ "$LATEST_RELEASE" = "null" ]; then
+          echo "WARNING: No releases found for project ${project_id}. Skipping."
           continue
         fi
         
-        JOBS_API_URL="https://gitlab.com/api/v4/projects/${project_id}/pipelines/${PIPELINE_ID}/jobs?scope[]=success"
-        JOB_WITH_ARTIFACTS=$(curl --silent --show-error --header "PRIVATE-TOKEN: $GITLAB_TOKEN" "$JOBS_API_URL" | jq -r '[.[] | select(.artifacts_file != null)][0].id')
+        # Extract release tag and assets
+        RELEASE_TAG=$(echo "$LATEST_RELEASE" | jq -r '.tag_name')
+        echo "Found latest release: ${RELEASE_TAG}"
         
-        if [ "$JOB_WITH_ARTIFACTS" = "null" ]; then
-          echo "WARNING: No job with artifacts found in pipeline ${PIPELINE_ID}. Skipping."
+        # Get release assets (links)
+        RELEASE_ASSETS=$(echo "$LATEST_RELEASE" | jq -r '.assets.links[]?')
+        
+        if [ -z "$RELEASE_ASSETS" ]; then
+          echo "WARNING: No assets found in release ${RELEASE_TAG}. Skipping."
           continue
         fi
         
-        ARTIFACTS_BROWSE_URL="https://gitlab.com/api/v4/projects/${project_id}/jobs/${JOB_WITH_ARTIFACTS}/artifacts"
-        mapfile -t pkg_files < <(curl --silent --show-error --header "PRIVATE-TOKEN: $GITLAB_TOKEN" "$ARTIFACTS_BROWSE_URL" | jq -r '.[] | select(.filename | endswith(".pkg.tar.zst")) | .filename')
-        
-        for pkg_file in "${pkg_files[@]}"; do
-          echo "Found remote package: ${pkg_file}"
-          remote_packages_map["${pkg_file}"]="${project_id}/${JOB_WITH_ARTIFACTS}"
-        done
+        # Process each asset link
+        while IFS= read -r asset; do
+          if [ -z "$asset" ]; then continue; fi
+          
+          ASSET_URL=$(echo "$asset" | jq -r '.url')
+          ASSET_NAME=$(echo "$asset" | jq -r '.name')
+          
+          # Check if it's a package file
+          if [[ "$ASSET_NAME" == *.pkg.tar.zst ]]; then
+            echo "Found remote package: ${ASSET_NAME}"
+            remote_packages_map["${ASSET_NAME}"]="${ASSET_URL}"
+          fi
+        done <<< "$(echo "$LATEST_RELEASE" | jq -c '.assets.links[]?')"
       done
       echo "Total unique remote packages found: ${#remote_packages_map[@]}"
       
@@ -94,10 +105,19 @@ pages:
       for pkg_filename in "${!remote_packages_map[@]}"; do
         if [ ! -f "${REPO_ARCH_DIR}/${pkg_filename}" ]; then
           echo "  -> Downloading new package: ${pkg_filename}"
-          IFS='/' read -r project_id job_id <<< "${remote_packages_map[$pkg_filename]}"
-          DOWNLOAD_URL="https://gitlab.com/api/v4/projects/${project_id}/jobs/${job_id}/artifacts/${pkg_filename}"
-          curl --location --silent --show-error --header "PRIVATE-TOKEN: $GITLAB_TOKEN" --output "${REPO_ARCH_DIR}/${pkg_filename}" "${DOWNLOAD_URL}"
-          REPO_UPDATED=true
+          DOWNLOAD_URL="${remote_packages_map[$pkg_filename]}"
+          
+          # Download the package with proper error handling
+          if curl --location --silent --show-error --fail --header "PRIVATE-TOKEN: $GITLAB_TOKEN" --output "${REPO_ARCH_DIR}/${pkg_filename}" "${DOWNLOAD_URL}"; then
+            echo "    Successfully downloaded: ${pkg_filename}"
+            REPO_UPDATED=true
+          else
+            echo "    ERROR: Failed to download ${pkg_filename} from ${DOWNLOAD_URL}"
+            # Remove partial file if it exists
+            rm -f "${REPO_ARCH_DIR}/${pkg_filename}"
+          fi
+        else
+          echo "  -> Package already exists in cache: ${pkg_filename}"
         fi
       done
       
@@ -116,6 +136,11 @@ pages:
         repo-add "${REPO_NAME}.db.tar.gz" *.pkg.tar.zst
       else
         echo "No changes detected. Using database from cache."
+        # Ensure database files exist even if no updates
+        if [ ! -f "${REPO_NAME}.db.tar.gz" ] && ls ./*.pkg.tar.zst 1> /dev/null 2>&1; then
+          echo "Database missing but packages exist. Rebuilding database..."
+          repo-add "${REPO_NAME}.db.tar.gz" *.pkg.tar.zst
+        fi
       fi
       
       # --- Step 4: CRITICAL FIX FOR GITLAB PAGES (403 ERROR) ---
