@@ -2,7 +2,7 @@
 
 # Copyright (C) 2025 CrystalNetwork Studio
 #
-# This file is part of the CrystalNetwork Studio CrystalLinux Repository.
+# This file is part of the CrystalNetwork Studio, CrystalLinux Repository.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -19,8 +19,6 @@
 
 # --- Configuration ---
 REPO_NAME="crystallinux"
-
-# The server URL. $arch will be automatically replaced by pacman with your architecture
 SERVER_URL="https://crystalnetwork-studio.gitlab.io/linux/CrystalLinux/repository/pkgbuilds/gitlab-profile/\$arch"
 
 # Configuration file paths
@@ -88,7 +86,6 @@ install_repo() {
     print_info "Starting repository installation..."
 
     # Create the repository configuration file content.
-    # SigLevel = Optional TrustAll matches your current configuration.
     REPO_CONFIG="[${REPO_NAME}]\nSigLevel = Optional TrustAll\nServer = ${SERVER_URL}\n"
 
     print_info "Creating repository configuration file at ${REPO_FILE_PATH}..."
