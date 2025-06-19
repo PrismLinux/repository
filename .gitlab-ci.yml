@@ -187,8 +187,11 @@ pages:
       
       # --- Step 5: Generate package metadata JSON for web interface ---
       echo "Generating package metadata for web interface..."
-      PACKAGES_JSON="${REPO_DIR}/api/packages.json"
-      mkdir -p "${REPO_DIR}/api"
+      # Use a relative path to create the 'api' directory in the correct location (project_root/public/api)
+      mkdir -p "../../${REPO_DIR}/api"
+      
+      # Define the path to the JSON file relative to the project root
+      PACKAGES_JSON="../../${REPO_DIR}/api/packages.json"
       
       echo "[" > "$PACKAGES_JSON"
       first_package=true
