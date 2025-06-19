@@ -2,31 +2,41 @@ image: archlinux:latest
 
 variables:
   REPO_NAME: "crystallinux"
-  # Add more project IDs here, separated by spaces
   PACKAGE_PROJECT_IDS: "70724583" 
-  # Set your GitLab Pages URL here for the instructions
-  # Example: "https://your-username.gitlab.io/your-repo-project"
-  GITLAB_PAGES_URL: "https://crystalnetwork-studio.gitlab.io/linux/CrystalLinux/repository/pkgbuilds/gitlab-profile/"
+  GITLAB_PAGES_URL: "https://crystalnetwork-studio.gitlab.io/linux/CrystalLinux/repository/main"
 
 pages:
   stage: deploy
 
+  # --- CACHING IMPLEMENTATION ---
+  # This tells GitLab CI to save and restore the x86_64 directory between runs.
+  cache:
+    key: "${CI_COMMIT_REF_SLUG}-arch-repo" # A unique key for the cache, tied to the branch name
+    paths:
+      - public/x86_64/ # The directory to cache
+    policy: pull-push # Restore the cache at the start (pull) and update it at the end (push)
+
   before_script:
     - pacman -Syu --noconfirm
-    # base-devel is crucial for 'repo-add'
     - pacman -S --noconfirm curl jq base-devel git
 
   script:
     # --- 1. Setup Repository Directory ---
+    # The cache is restored before this script runs, but we use 'mkdir -p' to ensure
+    # the directory exists on the very first run when the cache is empty.
     - mkdir -p public/x86_64
-    - echo "Created repository directory structure at public/x86_64"
+    - echo "Repository directory ensured at public/x86_64"
+    - echo "Current repository contents (from cache):"
+    - ls -l public/x86_64 || echo "Cache is empty."
 
-    # --- 2. Fetch and Download Packages from other Projects ---
+    # --- 2. Fetch, Compare, and Download Packages ---
+    # This variable will track if we need to rebuild the repository database.
+    - REPO_UPDATED=false
     - |
       for project_id in $PACKAGE_PROJECT_IDS; do
+        echo ""
         echo ">>> Processing project ID: $project_id"
         
-        # Get the latest successful pipeline for the main branch
         PIPELINES_API_URL="https://gitlab.com/api/v4/projects/${project_id}/pipelines?status=success&ref=main&per_page=1"
         PIPELINE_RESPONSE=$(curl --silent --show-error --header "PRIVATE-TOKEN: $GITLAB_TOKEN" "$PIPELINES_API_URL")
         
@@ -36,71 +46,78 @@ pages:
         fi
         
         PIPELINE_ID=$(echo "$PIPELINE_RESPONSE" | jq -r '.[0].id')
-        echo "Found latest successful pipeline ID: $PIPELINE_ID"
-        
-        # Get jobs from the pipeline that have artifacts
         JOBS_API_URL="https://gitlab.com/api/v4/projects/${project_id}/pipelines/${PIPELINE_ID}/jobs?scope[]=success"
         JOBS_RESPONSE=$(curl --silent --show-error --header "PRIVATE-TOKEN: $GITLAB_TOKEN" "$JOBS_API_URL")
         JOB_WITH_ARTIFACTS=$(echo "$JOBS_RESPONSE" | jq -r '.[] | select(.artifacts_file != null) | .id' | head -n 1)
         
         if [ -z "$JOB_WITH_ARTIFACTS" ]; then
-          echo "WARNING: No successful jobs with artifacts found in pipeline $PIPELINE_ID for project $project_id. Skipping."
+          echo "WARNING: No successful jobs with artifacts found for project $project_id. Skipping."
           continue
         fi
         
-        echo "Found job with artifacts: $JOB_WITH_ARTIFACTS"
-        
-        # Download the artifacts archive to a temporary directory
+        echo "Found job $JOB_WITH_ARTIFACTS with artifacts to check."
         TEMP_DIR=$(mktemp -d)
         ARTIFACTS_ZIP="$TEMP_DIR/artifacts.zip"
         
-        echo "Downloading artifacts from job $JOB_WITH_ARTIFACTS..."
-        curl --location --silent --show-error --header "PRIVATE-TOKEN: $GITLAB_TOKEN" \
-             --output "$ARTIFACTS_ZIP" \
+        echo "Downloading artifacts to temporary location for inspection..."
+        curl --location --silent --show-error --header "PRIVATE-TOKEN: $GITLAB_TOKEN" --output "$ARTIFACTS_ZIP" \
              "https://gitlab.com/api/v4/projects/${project_id}/jobs/${JOB_WITH_ARTIFACTS}/artifacts"
         
-        if [ -f "$ARTIFACTS_ZIP" ]; then
-          echo "Extracting artifacts..."
+        if [ -f "$ARTIFACTS_ZIP" ] && [ -s "$ARTIFACTS_ZIP" ]; then
           unzip -q "$ARTIFACTS_ZIP" -d "$TEMP_DIR"
           
-          # Find and move the package files to our repository directory
-          find "$TEMP_DIR" -name "*.pkg.tar.zst" -print0 | while IFS= read -r -d $'\0' pkg_file; do
-            PACKAGE_NAME=$(basename "$pkg_file")
-            echo "Found package: $PACKAGE_NAME. Moving to public/x86_64/"
-            mv "$pkg_file" "public/x86_64/"
+          # Now, loop through found packages and decide if they are new
+          find "$TEMP_DIR" -name "*.pkg.tar.zst" -print0 | while IFS= read -r -d $'\0' remote_pkg_path; do
+            REMOTE_PKG_FILENAME=$(basename "$remote_pkg_path")
+            
+            # --- CACHING LOGIC ---
+            # Check if this exact package version already exists in our repository.
+            if [ -f "public/x86_64/${REMOTE_PKG_FILENAME}" ]; then
+              echo "Package ${REMOTE_PKG_FILENAME} is already the latest version. Skipping."
+              continue # Move to the next package
+            fi
+            
+            # If we are here, the package is new or updated.
+            echo "New/updated package found: ${REMOTE_PKG_FILENAME}"
+            REPO_UPDATED=true
+            
+            # Get the base name of the package (e.g., 'xmcl-launcher') to remove any old versions.
+            # `pacman -Qp` is the most reliable way to get package info from a file.
+            BASE_PKG_NAME=$(pacman -Qp "$remote_pkg_path" | awk '{print $1}')
+            
+            echo "Removing old versions of '${BASE_PKG_NAME}' from the repository..."
+            # The find command will find files like 'xmcl-launcher-OLD-VERSION.pkg.tar.zst' and delete them.
+            find public/x86_64/ -name "${BASE_PKG_NAME}-*.pkg.tar.zst" -delete
+            
+            echo "Adding new version to public/x86_64/"
+            mv "$remote_pkg_path" "public/x86_64/"
           done
         else
             echo "WARNING: Failed to download artifacts for job $JOB_WITH_ARTIFACTS."
         fi
         
-        # Clean up the temporary directory
         rm -rf "$TEMP_DIR"
         echo "--- Finished processing project $project_id ---"
       done
 
     # --- 3. Create the Pacman Repository Database ---
     - cd public/x86_64
-    - echo "Generating repository database..."
-    # Remove old database files to ensure a clean build
     - |
-      rm -f ${REPO_NAME}.db ${REPO_NAME}.db.tar.gz ${REPO_NAME}.files ${REPO_NAME}.files.tar.gz
-      
-      # Check if there are any packages to add
-      if [ -z "$(find . -maxdepth 1 -name '*.pkg.tar.zst' -print -quit)" ]; then
-          echo "No packages found. Creating an empty repository."
-          # Create empty db so pacman doesn't complain
-          touch ${REPO_NAME}.db.tar.gz
-          touch ${REPO_NAME}.files.tar.gz
+      if [ "$REPO_UPDATED" = true ]; then
+        echo "Repository was updated. Rebuilding database..."
+        repo-add ${REPO_NAME}.db.tar.gz *.pkg.tar.zst
+
+        echo "Preparing database for static hosting..."
+        rm -f ${REPO_NAME}.db ${REPO_NAME}.files
+        cp ${REPO_NAME}.db.tar.gz ${REPO_NAME}.db
+        cp ${REPO_NAME}.files.tar.gz ${REPO_NAME}.files
+        echo "Repository database rebuilt successfully."
       else
-          echo "Adding packages to the ${REPO_NAME} repository..."
-          # Add all .pkg.tar.zst files in the current directory to the repo database
-          # The command creates/updates ${REPO_NAME}.db.tar.gz and ${REPO_NAME}.files.tar.gz
-          repo-add ${REPO_NAME}.db.tar.gz *.pkg.tar.zst
-          echo "Repository database created successfully."
+        echo "No packages were updated. Using cached repository database."
       fi
     - cd ../..
 
-    # --- 4. Generate a Human-Readable HTML Index Page ---
+    # --- 4. Generate a Human-Readable HTML Index Page
     - echo "Generating index.html..."
     - |
       cat > public/index.html << EOF
@@ -126,15 +143,13 @@ pages:
         <h2>How to Use</h2>
         <p>Add the following to your <code>/etc/pacman.conf</code> file:</p>
         <pre><code>[${REPO_NAME}]
-      SigLevel = Optional TrustAll
-      Server = ${GITLAB_PAGES_URL}/x86_64</code></pre>
+        SigLevel = Optional TrustAll
+        Server = ${GITLAB_PAGES_URL}/x86_64</code></pre>
         <p>Then, run <code>sudo pacman -Syu</code> to synchronize the new repository.</p>
         
         <h2>Available Packages (x86_64)</h2>
         <div class="package-list">
       EOF
-
-    # List the packages in the HTML file
     - |
       if [ -z "$(find public/x86_64 -maxdepth 1 -name '*.pkg.tar.zst' -print -quit)" ]; then
           echo "<p>No packages are available in this repository yet.</p>" >> public/index.html
@@ -144,7 +159,6 @@ pages:
               echo "<a href=\"x86_64/${PKG_NAME}\">${PKG_NAME}</a>" >> public/index.html
           done
       fi
-
     - |
       cat >> public/index.html << 'EOF'
         </div>
@@ -152,8 +166,6 @@ pages:
       </div>
       </body></html>
       EOF
-    
-    # Create a simple index in the x86_64 directory for browsing
     - |
       cat > public/x86_64/index.html << 'EOF'
       <!DOCTYPE html>
