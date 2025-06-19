@@ -28,7 +28,6 @@ workflow:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE == 'push'
 
 # --- Cache ---
-# Caches the repository contents to avoid re-downloading packages that haven't changed.
 cache:
   key: "repo-cache-${CI_COMMIT_REF_SLUG}"
   paths:
@@ -211,11 +210,6 @@ pages:
               <h1>CrystalLinux Repository</h1>
               <p>Arch Linux compatible package repository for CrystalLinux distribution.</p>
               
-              <div class="links">
-                  <a href="README.md">Installation Instructions</a>
-                  <a href="crystallinux-repo.conf">Pacman Config</a>
-              </div>
-              
               <h2>Quick Setup</h2>
               <p>Add the following to your <code>/etc/pacman.conf</code>:</p>
               <div class="code">
@@ -230,71 +224,8 @@ pages:
       </body>
       </html>
       EOF
-      
-      # Create pacman configuration snippet for users
-      cat > "${REPO_DIR}/crystallinux-repo.conf" << 'EOF'
-      # Add this to your /etc/pacman.conf
-      [crystallinux]
-      Server = https://crystalnetwork-studio.gitlab.io/linux/CrystalLinux/repository/pkgbuilds/gitlab-profile/$arch
-      SigLevel = Optional TrustAll
-      EOF
-            
-      # Create installation instructions
-      cat > "${REPO_DIR}/README.md" << 'EOF'
-      # CrystalLinux Repository
 
-      ## Installation
-
-      Add the following to your `/etc/pacman.conf`:
-
-      ```
-      [crystallinux]
-      Server = https://crystalnetwork-studio.gitlab.io/linux/CrystalLinux/repository/pkgbuilds/gitlab-profile/$arch
-      SigLevel = Optional TrustAll
-      ```
-
-      Then run:
-      ```bash
-      sudo pacman -Sy
-      ```
-
-      ## Available Packages
-
-      - Database files: [crystallinux.db.tar.gz](x86_64/crystallinux.db.tar.gz), [crystallinux.files.tar.gz](x86_64/crystallinux.files.tar.gz)
-
-      ## Manual Database Access
-
-      If you encounter 403 errors, you can access the database files directly:
-      - Database: https://crystalnetwork-studio.gitlab.io/linux/CrystalLinux/repository/pkgbuilds/gitlab-profile/x86_64/crystallinux.db.tar.gz
-      - Files: https://crystalnetwork-studio.gitlab.io/linux/CrystalLinux/repository/pkgbuilds/gitlab-profile/x86_64/crystallinux.files.tar.gz
-
-      ## Troubleshooting
-
-      If pacman returns 403 errors when accessing the database, try:
-
-      1. Clear pacman cache: `sudo pacman -Scc`
-      2. Update package lists: `sudo pacman -Sy`
-      3. Use direct .tar.gz URLs in your pacman configuration
-
-      ### Alternative Configuration
-
-      If you continue to have issues, you can configure pacman to use the .tar.gz files directly by creating a custom configuration:
-
-      ```bash
-      sudo tee /etc/pacman.d/crystallinux.conf << 'EOFCONFIG'
-      [crystallinux]
-      Server = https://crystalnetwork-studio.gitlab.io/linux/CrystalLinux/repository/pkgbuilds/gitlab-profile/$arch
-      SigLevel = Optional TrustAll
-      EOFCONFIG
-      ```
-
-      Then include it in your main `/etc/pacman.conf`:
-      ```
-      Include = /etc/pacman.d/crystallinux.conf
-      ```
-      EOF
-
-      # --- Step 6: FINAL DEBUGGING STEP ---
+      # --- Step 6: FINAL STEP ---
       echo "-----------------------------------------"
       echo "Final check before artifact upload:"
       echo "Current directory: $(pwd)"
