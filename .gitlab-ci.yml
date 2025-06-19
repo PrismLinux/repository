@@ -1,7 +1,20 @@
+# Copyright (C) 2025 CrystalNetwork Studio
 #
-# CI/CD Pipeline for an CrystalLinux Aggregator Repository
-# This pipeline fetches, syncs, and publishes a unified pacman repository.
+# This file is part of the CrystalNetwork Studio CrystalLinux Repository.
 #
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <https://www.gnu.org/licenses/>.
+
 image: archlinux:latest
 
 variables:
@@ -211,7 +224,7 @@ pages:
               <p>Add the following to your <code>/etc/pacman.conf</code>:</p>
               <div class="code">
       [crystallinux]<br>
-      Server = https://crystalnetwork-studio.gitlab.io/linux/CrystalLinux/repository/pkgbuilds/gitlab-profile/$repo/$arch<br>
+      Server = https://crystalnetwork-studio.gitlab.io/linux/CrystalLinux/repository/pkgbuilds/gitlab-profile/$arch<br>
       SigLevel = Optional TrustAll
               </div>
               
@@ -226,7 +239,7 @@ pages:
       cat > "${REPO_DIR}/crystallinux-repo.conf" << 'EOF'
       # Add this to your /etc/pacman.conf
       [crystallinux]
-      Server = https://crystalnetwork-studio.gitlab.io/linux/CrystalLinux/repository/pkgbuilds/gitlab-profile/$repo/$arch
+      Server = https://crystalnetwork-studio.gitlab.io/linux/CrystalLinux/repository/pkgbuilds/gitlab-profile/$arch
       SigLevel = Optional TrustAll
       EOF
             
@@ -240,7 +253,7 @@ pages:
 
       ```
       [crystallinux]
-      Server = https://crystalnetwork-studio.gitlab.io/linux/CrystalLinux/repository/pkgbuilds/gitlab-profile/$repo/$arch
+      Server = https://crystalnetwork-studio.gitlab.io/linux/CrystalLinux/repository/pkgbuilds/gitlab-profile/$arch
       SigLevel = Optional TrustAll
       ```
 
@@ -275,7 +288,7 @@ pages:
       ```bash
       sudo tee /etc/pacman.d/crystallinux.conf << 'EOFCONFIG'
       [crystallinux]
-      Server = https://crystalnetwork-studio.gitlab.io/linux/CrystalLinux/repository/pkgbuilds/gitlab-profile/$repo/$arch
+      Server = https://crystalnetwork-studio.gitlab.io/linux/CrystalLinux/repository/pkgbuilds/gitlab-profile/$arch
       SigLevel = Optional TrustAll
       EOFCONFIG
       ```
