@@ -19,7 +19,6 @@ image: archlinux:latest
 
 variables:
   REPO_NAME: "crystallinux"
-  # The directory to be deployed to GitLab Pages MUST be named 'public'.
   REPO_DIR: "public"
   PACKAGE_PROJECT_IDS: "70724583"
 
