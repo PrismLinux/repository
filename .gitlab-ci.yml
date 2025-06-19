@@ -20,7 +20,6 @@ image: archlinux:latest
 variables:
   REPO_NAME: "crystallinux"
   REPO_DIR: "public"
-  CI_PAGES_URL: "https://crystalnetwork-studio.gitlab.io/linux/CrystalLinux/repository/pkgbuilds/gitlab-profile/"
 
 workflow:
   rules:
@@ -363,7 +362,7 @@ pages:
                 <div class="setup-section">
                     <h3>Quick Setup</h3>
                     <p>Add the following to your <code>/etc/pacman.conf</code>:</p>
-                    <div class="code">[crystallinux]<br>Server = ${CI_PAGES_URL}/x86_64<br>SigLevel = Optional TrustAll</div>
+                    <div class="code">[crystallinux]<br>Server = https://crystalnetwork-studio.gitlab.io/linux/CrystalLinux/packages/gitlab-profile/x86_64<br>SigLevel = Optional TrustAll</div>
                     
                     <p>Then run:</p>
                     <div class="code">sudo pacman -Sy</div>

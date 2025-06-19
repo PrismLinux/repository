@@ -19,7 +19,7 @@
 
 # --- Configuration ---
 REPO_NAME="crystallinux"
-SERVER_URL="https://crystalnetwork-studio.gitlab.io/linux/CrystalLinux/repository/pkgbuilds/gitlab-profile/\$arch"
+SERVER_URL="https://crystalnetwork-studio.gitlab.io/linux/CrystalLinux/packages/gitlab-profile/\$arch"
 
 # Configuration file paths
 REPO_FILE_NAME="${REPO_NAME}.conf"
