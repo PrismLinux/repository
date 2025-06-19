@@ -3,34 +3,24 @@ image: archlinux:latest
 variables:
   REPO_NAME: "crystallinux"
   PACKAGE_PROJECT_IDS: "70724583" 
-  GITLAB_PAGES_URL: "https://crystalnetwork-studio.gitlab.io/linux/CrystalLinux/repository/main"
+  GITLAB_PAGES_URL: "https://crystalnetwork-studio.gitlab.io/linux/CrystalLinux/repository/pkgbuilds/gitlab-profile/"
 
 pages:
   stage: deploy
 
-  # --- CACHING IMPLEMENTATION ---
-  # This tells GitLab CI to save and restore the x86_64 directory between runs.
   cache:
-    key: "${CI_COMMIT_REF_SLUG}-arch-repo" # A unique key for the cache, tied to the branch name
+    key: "${CI_COMMIT_REF_SLUG}-arch-repo"
     paths:
-      - public/x86_64/ # The directory to cache
-    policy: pull-push # Restore the cache at the start (pull) and update it at the end (push)
+      - public/x86_64/
+    policy: pull-push
 
   before_script:
     - pacman -Syu --noconfirm
     - pacman -S --noconfirm curl jq base-devel git
 
   script:
-    # --- 1. Setup Repository Directory ---
-    # The cache is restored before this script runs, but we use 'mkdir -p' to ensure
-    # the directory exists on the very first run when the cache is empty.
     - mkdir -p public/x86_64
     - echo "Repository directory ensured at public/x86_64"
-    - echo "Current repository contents (from cache):"
-    - ls -l public/x86_64 || echo "Cache is empty."
-
-    # --- 2. Fetch, Compare, and Download Packages ---
-    # This variable will track if we need to rebuild the repository database.
     - REPO_UPDATED=false
     - |
       for project_id in $PACKAGE_PROJECT_IDS; do
@@ -66,27 +56,20 @@ pages:
         if [ -f "$ARTIFACTS_ZIP" ] && [ -s "$ARTIFACTS_ZIP" ]; then
           unzip -q "$ARTIFACTS_ZIP" -d "$TEMP_DIR"
           
-          # Now, loop through found packages and decide if they are new
           find "$TEMP_DIR" -name "*.pkg.tar.zst" -print0 | while IFS= read -r -d $'\0' remote_pkg_path; do
             REMOTE_PKG_FILENAME=$(basename "$remote_pkg_path")
             
-            # --- CACHING LOGIC ---
-            # Check if this exact package version already exists in our repository.
             if [ -f "public/x86_64/${REMOTE_PKG_FILENAME}" ]; then
               echo "Package ${REMOTE_PKG_FILENAME} is already the latest version. Skipping."
-              continue # Move to the next package
+              continue
             fi
             
-            # If we are here, the package is new or updated.
             echo "New/updated package found: ${REMOTE_PKG_FILENAME}"
-            REPO_UPDATED=true
+            export REPO_UPDATED=true # Use export to make it visible in the next script block
             
-            # Get the base name of the package (e.g., 'xmcl-launcher') to remove any old versions.
-            # `pacman -Qp` is the most reliable way to get package info from a file.
             BASE_PKG_NAME=$(pacman -Qp "$remote_pkg_path" | awk '{print $1}')
             
             echo "Removing old versions of '${BASE_PKG_NAME}' from the repository..."
-            # The find command will find files like 'xmcl-launcher-OLD-VERSION.pkg.tar.zst' and delete them.
             find public/x86_64/ -name "${BASE_PKG_NAME}-*.pkg.tar.zst" -delete
             
             echo "Adding new version to public/x86_64/"
@@ -100,24 +83,36 @@ pages:
         echo "--- Finished processing project $project_id ---"
       done
 
-    # --- 3. Create the Pacman Repository Database ---
+    # --- 3. Create the Pacman Repository Database (Logic Corrected) ---
     - cd public/x86_64
     - |
+      # First, decide if we need to run repo-add
       if [ "$REPO_UPDATED" = true ]; then
-        echo "Repository was updated. Rebuilding database..."
+        echo "Repository was updated. Rebuilding database with repo-add..."
+        # This creates the database and the problematic symlinks
         repo-add ${REPO_NAME}.db.tar.gz *.pkg.tar.zst
-
-        echo "Preparing database for static hosting..."
+      else
+        echo "No packages were updated. The database files from cache will be used."
+      fi
+      
+      # --- ALWAYS RUN THIS FIX ---
+      # This ensures that no matter what, the final artifact sent to GitLab Pages
+      # does not contain symlinks, fixing the 403 error.
+      echo "Ensuring database is prepared for static hosting..."
+      if [ -f "${REPO_NAME}.db.tar.gz" ]; then
+        # Remove any symlinks that might exist from the cache or from repo-add
         rm -f ${REPO_NAME}.db ${REPO_NAME}.files
+        
+        # Create hard copies for pacman to download
         cp ${REPO_NAME}.db.tar.gz ${REPO_NAME}.db
         cp ${REPO_NAME}.files.tar.gz ${REPO_NAME}.files
-        echo "Repository database rebuilt successfully."
+        echo "Database files are correctly formatted."
       else
-        echo "No packages were updated. Using cached repository database."
+        echo "No database file found to process. This might be the first run or an empty repo."
       fi
     - cd ../..
 
-    # --- 4. Generate a Human-Readable HTML Index Page
+    # --- 4. Generate a Human-Readable HTML Index Page ---
     - echo "Generating index.html..."
     - |
       cat > public/index.html << EOF
@@ -139,14 +134,12 @@ pages:
       <div class="container">
         <h1>${REPO_NAME} Package Repository</h1>
         <p>This is an unofficial package repository for Arch Linux.</p>
-        
         <h2>How to Use</h2>
         <p>Add the following to your <code>/etc/pacman.conf</code> file:</p>
         <pre><code>[${REPO_NAME}]
-        SigLevel = Optional TrustAll
-        Server = ${GITLAB_PAGES_URL}/x86_64</code></pre>
+      SigLevel = Optional TrustAll
+      Server = ${GITLAB_PAGES_URL}/x86_64</code></pre>
         <p>Then, run <code>sudo pacman -Syu</code> to synchronize the new repository.</p>
-        
         <h2>Available Packages (x86_64)</h2>
         <div class="package-list">
       EOF
