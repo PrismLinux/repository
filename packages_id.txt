@@ -1,2 +1,3 @@
 70724583 # XMCL-Launcher
 70964684 # themes-fish
+70970161 # nvidia-inst
