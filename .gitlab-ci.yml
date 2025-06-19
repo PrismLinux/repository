@@ -39,16 +39,18 @@ pages:
   before_script:
     - pacman -Syu --noconfirm
     - pacman -S --noconfirm curl jq base-devel git
-  
+
   script:
     - |
       set -eo pipefail
       REPO_ARCH_DIR="${REPO_DIR}/x86_64"
-      mkdir -p "${REPO_ARCH_DIR}"
       
+      echo "Ensuring required directories exist..."
+      mkdir -p "${REPO_ARCH_DIR}"
+      mkdir -p "${REPO_DIR}/api"
+
       echo "Cleaning up previously generated web files..."
-      rm -f "${REPO_DIR}/index.html"
-      rm -rf "${REPO_DIR}/api"
+      rm -f "${REPO_DIR}/index.html" "${REPO_DIR}/api/search.html" "${REPO_DIR}/api/packages.json"
 
       declare -A remote_packages_map
       echo "Fetching list of all available remote packages from releases..."
@@ -95,29 +97,25 @@ pages:
         fi
       done
       
-      echo "Updating repository database..."
-      cd "${REPO_ARCH_DIR}"
-      
-      rm -f ${REPO_NAME}.db ${REPO_NAME}.db.tar.gz ${REPO_NAME}.files ${REPO_NAME}.files.tar.gz
+      echo "Updating repository database and related files..."
+      (
+        cd "${REPO_ARCH_DIR}"
+        
+        rm -f ${REPO_NAME}.db ${REPO_NAME}.db.tar.gz ${REPO_NAME}.files ${REPO_NAME}.files.tar.gz
 
-      if ls ./*.pkg.tar.zst 1> /dev/null 2>&1; then
-        echo "Found packages. Rebuilding repository database..."
-        repo-add "${REPO_NAME}.db.tar.gz" *.pkg.tar.zst
-      else
-        echo "No packages found in repository. The database will be empty."
-      fi
-      
-      echo "Ensuring database files are compatible with static hosting..."
-      if [ -f "${REPO_NAME}.db.tar.gz" ]; then
+        if ls ./*.pkg.tar.zst 1> /dev/null 2>&1; then
+          echo "Found packages. Rebuilding repository database..."
+          repo-add "${REPO_NAME}.db.tar.gz" *.pkg.tar.zst
+        else
+          echo "No packages found in repository. The database will be empty."
+          touch "${REPO_NAME}.db.tar.gz" "${REPO_NAME}.files.tar.gz"
+        fi
+        
+        echo "Ensuring database files are compatible with static hosting..."
         ln -sf "${REPO_NAME}.db.tar.gz" "${REPO_NAME}.db"
         ln -sf "${REPO_NAME}.files.tar.gz" "${REPO_NAME}.files"
-      else
-        touch "${REPO_NAME}.db.tar.gz" "${REPO_NAME}.files.tar.gz"
-        ln -sf "${REPO_NAME}.db.tar.gz" "${REPO_NAME}.db"
-        ln -sf "${REPO_NAME}.files.tar.gz" "${REPO_NAME}.files"
-      fi
-      
-      cat > .htaccess << 'EOF'
+        
+        cat > .htaccess << 'EOF'
         <Files "crystallinux.db">
             Header set Content-Type "application/octet-stream"
             Header set Content-Disposition "attachment"
@@ -127,47 +125,47 @@ pages:
             Header set Content-Disposition "attachment"
         </Files>
         EOF
-        
+      )
+
       echo "Generating package metadata for web interface..."
-      mkdir -p "../../${REPO_DIR}/api"
-      PACKAGES_JSON="../../${REPO_DIR}/api/packages.json"
+      PACKAGES_JSON="${REPO_DIR}/api/packages.json"
       
-      echo "[" > "$PACKAGES_JSON"
-      first_package=true
+      {
+        echo "["
+        first_package=true
+        for pkg_file in "${REPO_ARCH_DIR}"/*.pkg.tar.zst; do
+          [ -f "$pkg_file" ] || continue
+          if [ "$first_package" = false ]; then echo ","; fi
+          first_package=false
+          
+          pkg_info=$(pacman -Qip "$pkg_file" 2>/dev/null || echo "")
+          pkg_name=$(echo "$pkg_info" | grep "^Name" | sed 's/Name[[:space:]]*:[[:space:]]*//' | sed 's/"/\\"/g')
+          pkg_version=$(echo "$pkg_info" | grep "^Version" | sed 's/Version[[:space:]]*:[[:space:]]*//' | sed 's/"/\\"/g')
+          pkg_desc=$(echo "$pkg_info" | grep "^Description" | sed 's/Description[[:space:]]*:[[:space:]]*//' | sed 's/"/\\"/g')
+          pkg_arch=$(echo "$pkg_info" | grep "^Architecture" | sed 's/Architecture[[:space:]]*:[[:space:]]*//')
+          pkg_size=$(ls -lh "$pkg_file" | awk '{print $5}')
+          pkg_date=$(date -r "$pkg_file" '+%Y-%m-%d %H:%M:%S')
+          pkg_depends=$(echo "$pkg_info" | grep "^Depends On" | sed 's/Depends On[[:space:]]*:[[:space:]]*//' | sed 's/"/\\"/g')
+          pkg_groups=$(echo "$pkg_info" | grep "^Groups" | sed 's/Groups[[:space:]]*:[[:space:]]*//' | sed 's/"/\\"/g')
+          
+          cat <<EOF
+            {
+            "name": "${pkg_name:-Unknown}",
+            "version": "${pkg_version:-Unknown}",
+            "description": "${pkg_desc:-No description available}",
+            "architecture": "${pkg_arch:-x86_64}",
+            "filename": "$(basename "$pkg_file")",
+            "size": "$pkg_size",
+            "modified": "$pkg_date",
+            "depends": "${pkg_depends:-None}",
+            "groups": "${pkg_groups:-None}"
+            }
+            EOF
+        done
+        echo "]"
+      } > "$PACKAGES_JSON"
       
-      for pkg_file in *.pkg.tar.zst; do
-        [ -f "$pkg_file" ] || continue
-        if [ "$first_package" = false ]; then echo "," >> "$PACKAGES_JSON"; fi
-        first_package=false
-        pkg_info=$(pacman -Qip "$pkg_file" 2>/dev/null || echo "")
-        pkg_name=$(echo "$pkg_info" | grep "^Name" | sed 's/Name[[:space:]]*:[[:space:]]*//' | sed 's/"/\\"/g')
-        pkg_version=$(echo "$pkg_info" | grep "^Version" | sed 's/Version[[:space:]]*:[[:space:]]*//' | sed 's/"/\\"/g')
-        pkg_desc=$(echo "$pkg_info" | grep "^Description" | sed 's/Description[[:space:]]*:[[:space:]]*//' | sed 's/"/\\"/g')
-        pkg_arch=$(echo "$pkg_info" | grep "^Architecture" | sed 's/Architecture[[:space:]]*:[[:space:]]*//')
-        pkg_size=$(ls -lh "$pkg_file" | awk '{print $5}')
-        pkg_date=$(date -r "$pkg_file" '+%Y-%m-%d %H:%M:%S')
-        pkg_depends=$(echo "$pkg_info" | grep "^Depends On" | sed 's/Depends On[[:space:]]*:[[:space:]]*//' | sed 's/"/\\"/g')
-        pkg_groups=$(echo "$pkg_info" | grep "^Groups" | sed 's/Groups[[:space:]]*:[[:space:]]*//' | sed 's/"/\\"/g')
-        
-        cat >> "$PACKAGES_JSON" << EOF
-        {
-        "name": "${pkg_name:-Unknown}",
-        "version": "${pkg_version:-Unknown}",
-        "description": "${pkg_desc:-No description available}",
-        "architecture": "${pkg_arch:-x86_64}",
-        "filename": "$pkg_file",
-        "size": "$pkg_size",
-        "modified": "$pkg_date",
-        "depends": "${pkg_depends:-None}",
-        "groups": "${pkg_groups:-None}"
-        }
-        EOF
-      done
-      echo "" >> "$PACKAGES_JSON"
-      echo "]" >> "$PACKAGES_JSON"
-      
-      cd ../..
-      
+      echo "Generating main index.html page..."
       cat > "${REPO_DIR}/index.html" << 'EOF'
         <!DOCTYPE html>
         <html lang="en">
@@ -376,8 +374,8 @@ pages:
                 </div>
                 
                 <div class="nav-tabs">
-                    <button class="nav-tab active" onclick="showTab('setup')">Setup</button>
-                    <button class="nav-tab" onclick="showTab('packages')">Browse Packages</button>
+                    <button class="nav-tab active" onclick="showTab('setup', event)">Setup</button>
+                    <button class="nav-tab" onclick="showTab('packages', event)">Browse Packages</button>
                 </div>
                 
                 <div id="setup-tab" class="tab-content active">
@@ -385,7 +383,7 @@ pages:
                     <div class="setup-section">
                         <h3>Quick Setup</h3>
                         <p>Add the following to your <code>/etc/pacman.conf</code>:</p>
-                        <div class="code">[crystallinux]<br>Server = https://crystalnetwork-studio.gitlab.io/linux/CrystalLinux/repository/pkgbuilds/gitlab-profile/$arch<br>SigLevel = Optional TrustAll</div>
+                        <div class="code">[crystallinux]<br>Server = ${CI_PAGES_URL}/x86_64<br>SigLevel = Optional TrustAll</div>
                         
                         <p>Then run:</p>
                         <div class="code">sudo pacman -Sy</div>
@@ -439,7 +437,7 @@ pages:
                 let allPackages = [];
                 let filteredPackages = [];
                 
-                function showTab(tabName) {
+                function showTab(tabName, event) {
                     document.querySelectorAll('.nav-tab').forEach(tab => tab.classList.remove('active'));
                     document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
                     
@@ -453,15 +451,17 @@ pages:
                 
                 async function loadPackages() {
                     try {
-                        const response = await fetch('./api/packages.json');
+                        const response = await fetch(`./api/packages.json?v=${new Date().getTime()}`);
+                        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
                         allPackages = await response.json();
                         filteredPackages = [...allPackages];
                         updateStats();
                         renderPackages();
                         setupEventListeners();
                     } catch (error) {
+                        console.error("Error loading packages:", error);
                         document.getElementById('packages-container').innerHTML = 
-                            '<div class="no-results">Error loading packages. Please try again later.</div>';
+                            '<div class="no-results">Error loading packages. Please check the console and try again later.</div>';
                     }
                 }
                 
@@ -472,37 +472,46 @@ pages:
                 
                 function renderPackages() {
                     const container = document.getElementById('packages-container');
+                    container.innerHTML = ''; 
                     
                     if (filteredPackages.length === 0) {
                         container.innerHTML = '<div class="no-results">No packages found matching your criteria.</div>';
                         return;
                     }
                     
-                    const html = filteredPackages.map(pkg => `
-                        <div class="package-card">
-                            <div class="package-name">${pkg.name}</div>
-                            <div class="package-version">Version: ${pkg.version}</div>
-                            <div class="package-desc">${pkg.description}</div>
+                    const grid = document.createElement('div');
+                    grid.className = 'package-grid';
+                    
+                    const fragment = document.createDocumentFragment();
+                    filteredPackages.forEach(pkg => {
+                        const card = document.createElement('div');
+                        card.className = 'package-card';
+                        card.innerHTML = `
+                            <div class="package-name">${pkg.name || 'N/A'}</div>
+                            <div class="package-version">Version: ${pkg.version || 'N/A'}</div>
+                            <div class="package-desc">${pkg.description || 'No description.'}</div>
                             <div class="package-meta">
-                                <span><strong>Architecture:</strong> ${pkg.architecture}</span>
-                                <span><strong>Size:</strong> ${pkg.size}</span>
-                                <span><strong>Modified:</strong> ${pkg.modified}</span>
+                                <span><strong>Architecture:</strong> ${pkg.architecture || 'N/A'}</span>
+                                <span><strong>Size:</strong> ${pkg.size || 'N/A'}</span>
+                                <span><strong>Modified:</strong> ${pkg.modified || 'N/A'}</span>
                             </div>
                             <a href="./x86_64/${pkg.filename}" class="download-btn" download>Download Package</a>
-                        </div>
-                    `).join('');
+                        `;
+                        fragment.appendChild(card);
+                    });
                     
-                    container.innerHTML = `<div class="package-grid">${html}</div>`;
+                    grid.appendChild(fragment);
+                    container.appendChild(grid);
                 }
                 
-                function filterPackages() {
+                function filterAndSortPackages() {
                     const searchTerm = document.getElementById('search-input').value.toLowerCase();
                     const archFilter = document.getElementById('arch-filter').value;
                     const sortBy = document.getElementById('sort-filter').value;
                     
                     filteredPackages = allPackages.filter(pkg => {
-                        const matchesSearch = pkg.name.toLowerCase().includes(searchTerm) || 
-                                            pkg.description.toLowerCase().includes(searchTerm);
+                        const matchesSearch = (pkg.name?.toLowerCase() || '').includes(searchTerm) || 
+                                            (pkg.description?.toLowerCase() || '').includes(searchTerm);
                         const matchesArch = !archFilter || pkg.architecture === archFilter;
                         return matchesSearch && matchesArch;
                     });
@@ -510,13 +519,19 @@ pages:
                     filteredPackages.sort((a, b) => {
                         switch (sortBy) {
                             case 'name':
-                                return a.name.localeCompare(b.name);
+                                return (a.name || '').localeCompare(b.name || '');
                             case 'date':
                                 return new Date(b.modified) - new Date(a.modified);
                             case 'size':
-                                const sizeA = parseFloat(a.size.replace(/[^\d.]/g, ''));
-                                const sizeB = parseFloat(b.size.replace(/[^\d.]/g, ''));
-                                return sizeB - sizeA;
+                                const sizeToBytes = (sizeStr) => {
+                                    if (!sizeStr) return 0;
+                                    const size = parseFloat(sizeStr);
+                                    if (sizeStr.endsWith('K')) return size * 1024;
+                                    if (sizeStr.endsWith('M')) return size * 1024 * 1024;
+                                    if (sizeStr.endsWith('G')) return size * 1024 * 1024 * 1024;
+                                    return size;
+                                };
+                                return sizeToBytes(b.size) - sizeToBytes(a.size);
                             default:
                                 return 0;
                         }
@@ -527,15 +542,16 @@ pages:
                 }
                 
                 function setupEventListeners() {
-                    document.getElementById('search-input').addEventListener('input', filterPackages);
-                    document.getElementById('arch-filter').addEventListener('change', filterPackages);
-                    document.getElementById('sort-filter').addEventListener('change', filterPackages);
+                    document.getElementById('search-input').addEventListener('input', filterAndSortPackages);
+                    document.getElementById('arch-filter').addEventListener('change', filterAndSortPackages);
+                    document.getElementById('sort-filter').addEventListener('change', filterAndSortPackages);
                 }
             </script>
         </body>
         </html>
         EOF
 
+      echo "Generating API search.html fallback..."
       cat > "${REPO_DIR}/api/search.html" << 'EOF'
         <!DOCTYPE html>
         <html>
@@ -543,27 +559,30 @@ pages:
             <title>Package Search API</title>
         </head>
         <body>
+            <h1>Package Search API</h1>
+            <p>This is a fallback page. The primary data endpoint is <a href="packages.json">packages.json</a>.</p>
+            <p>Usage: <code>?q=search_term</code> (for client-side filtering)</p>
             <script>
-                const urlParams = new URLSearchParams(window.location.search);
-                const query = urlParams.get('q');
-                const format = urlParams.get('format') || 'json';
-                
-                if (query) {
-                    fetch('../api/packages.json')
-                        .then(response => response.json())
-                        .then(packages => {
-                            const results = packages.filter(pkg => 
-                                pkg.name.toLowerCase().includes(query.toLowerCase()) ||
-                                pkg.description.toLowerCase().includes(query.toLowerCase())
-                            );
-                            
-                            if (format === 'json') {
-                                document.body.innerHTML = '<pre>' + JSON.stringify(results, null, 2) + '</pre>';
-                            }
-                        });
-                } else {
-                    document.body.innerHTML = '<h1>Package Search API</h1><p>Usage: ?q=search_term&format=json</p>';
-                }
+                document.addEventListener('DOMContentLoaded', () => {
+                    const urlParams = new URLSearchParams(window.location.search);
+                    const query = urlParams.get('q');
+                    if (query) {
+                        document.body.innerHTML += `<p>Searching for: <strong>${query}</strong></p><pre id="results">Loading...</pre>`;
+                        fetch('packages.json')
+                            .then(response => response.json())
+                            .then(packages => {
+                                const results = packages.filter(pkg => 
+                                    (pkg.name?.toLowerCase() || '').includes(query.toLowerCase()) ||
+                                    (pkg.description?.toLowerCase() || '').includes(query.toLowerCase())
+                                );
+                                document.getElementById('results').textContent = JSON.stringify(results, null, 2);
+                            })
+                            .catch(err => {
+                                document.getElementById('results').textContent = 'Error loading package data.';
+                                console.error(err);
+                            });
+                    }
+                });
             </script>
         </body>
         </html>
