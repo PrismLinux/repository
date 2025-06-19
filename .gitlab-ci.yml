@@ -20,7 +20,6 @@ image: archlinux:latest
 variables:
   REPO_NAME: "crystallinux"
   REPO_DIR: "public"
-  PACKAGE_PROJECT_IDS: "70724583 70964684"
 
 workflow:
   rules:
@@ -54,7 +53,16 @@ pages:
     declare -A remote_packages_map
     echo "Fetching list of all available remote packages from releases..."
     
-    for project_id in $PACKAGE_PROJECT_IDS; do
+    # Read project IDs from the file, ignore comments and empty lines
+    if [ ! -f packages_id.txt ]; then
+      echo "ERROR: packages_id.txt not found!"
+      exit 1
+    fi
+
+    PROJECT_IDS_TO_PROCESS=$(grep -vE '^\s*#|^\s*$' packages_id.txt | awk '{print $1}' | tr '\n' ' ')
+    echo "Processing Project IDs: ${PROJECT_IDS_TO_PROCESS}"
+
+    for project_id in $PROJECT_IDS_TO_PROCESS; do
       RELEASES_API_URL="https://gitlab.com/api/v4/projects/${project_id}/releases"
       LATEST_RELEASE=$(curl --silent --show-error --header "PRIVATE-TOKEN: $GITLAB_TOKEN" "$RELEASES_API_URL" | jq -r '.[0]')
       
@@ -562,7 +570,7 @@ pages:
     </body>
     </html>
     EOF
-    
+        
     echo "-----------------------------------------"
     echo "Final check before artifact upload:"
     ls -laR public
