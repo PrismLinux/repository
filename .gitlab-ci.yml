@@ -1,182 +1,166 @@
+#
+# CI/CD Pipeline for an CrystalLinux Aggregator Repository
+# This pipeline fetches pre-built packages from other GitLab projects
+# and publishes them as a unified pacman repository on GitLab Pages.
+#
 image: archlinux:latest
 
 variables:
   REPO_NAME: "crystallinux"
-  PACKAGE_PROJECT_IDS: "70724583" 
-  GITLAB_PAGES_URL: "https://crystalnetwork-studio.gitlab.io/linux/CrystalLinux/repository/pkgbuilds/gitlab-profile/"
+  REPO_DIR: "public"
+  PACKAGE_PROJECT_IDS: "70724583"
 
-pages:
-  stage: deploy
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == 'schedule'
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE == 'push'
 
-  cache:
-    key: "${CI_COMMIT_REF_SLUG}-arch-repo"
-    paths:
-      - public/x86_64/
-    policy: pull-push
+# --- Cache ---
+# Caches the repository contents to avoid re-downloading packages that haven't changed.
+cache:
+  key: "repo-cache-${CI_COMMIT_REF_SLUG}"
+  paths:
+    - "${REPO_DIR}/"
+  policy: pull-push
 
+# --- Main Stages ---
+stages:
+  - update # Stage to sync packages and update the database
+  - deploy # Stage to deploy to GitLab Pages
+
+# --- Stage 1: Update Repository ---
+# Fetches remote packages, removes orphans, and rebuilds the database if needed.
+update_repository:
+  stage: update
+  
   before_script:
     - pacman -Syu --noconfirm
     - pacman -S --noconfirm curl jq base-devel git
-
+  
   script:
-    - mkdir -p public/x86_64
-    - echo "Repository directory ensured at public/x86_64"
-    - REPO_UPDATED=false
+    - set -eo pipefail # Exit on any error
+    - REPO_ARCH_DIR="${REPO_DIR}/x86_64"
+    - mkdir -p "${REPO_ARCH_DIR}"
+    - echo "Repository directory is ${REPO_ARCH_DIR}"
+    
+    # --- Step 1: Get a list of ALL expected remote packages ---
+    - declare -A remote_packages_map # Use an associative array for efficient lookups
+    - echo "Fetching list of all available remote packages..."
     - |
       for project_id in $PACKAGE_PROJECT_IDS; do
-        echo ""
-        echo ">>> Processing project ID: $project_id"
+        echo "--> Checking project ID: ${project_id}"
         
         PIPELINES_API_URL="https://gitlab.com/api/v4/projects/${project_id}/pipelines?status=success&ref=main&per_page=1"
-        PIPELINE_RESPONSE=$(curl --silent --show-error --header "PRIVATE-TOKEN: $GITLAB_TOKEN" "$PIPELINES_API_URL")
+        PIPELINE_ID=$(curl --silent --show-error --header "PRIVATE-TOKEN: $GITLAB_TOKEN" "$PIPELINES_API_URL" | jq -r '.[0].id')
         
-        if [ -z "$PIPELINE_RESPONSE" ] || [ "$PIPELINE_RESPONSE" = "[]" ]; then
-          echo "WARNING: No successful 'main' branch pipelines found for project $project_id. Skipping."
+        if [ "$PIPELINE_ID" = "null" ]; then
+          echo "WARNING: No successful pipeline found for project ${project_id}. Skipping."
           continue
         fi
         
-        PIPELINE_ID=$(echo "$PIPELINE_RESPONSE" | jq -r '.[0].id')
-        JOBS_API_URL="https://gitlab.com/api/v4/projects/${project_id}/pipelines/${PIPELINE_ID}/jobs?scope[]=success"
-        JOBS_RESPONSE=$(curl --silent --show-error --header "PRIVATE-TOKEN: $GITLAB_TOKEN" "$JOBS_API_URL")
-        JOB_WITH_ARTIFACTS=$(echo "$JOBS_RESPONSE" | jq -r '.[] | select(.artifacts_file != null) | .id' | head -n 1)
+        JOBS_API_URL="https://gitlab.com/api/v4/projects/${project_id}/jobs?pipeline_id=${PIPELINE_ID}&scope[]=success"
+        JOB_WITH_ARTIFACTS=$(curl --silent --show-error --header "PRIVATE-TOKEN: $GITLAB_TOKEN" "$JOBS_API_URL" | jq -r '[.[] | select(.artifacts_file != null)][0].id')
         
-        if [ -z "$JOB_WITH_ARTIFACTS" ]; then
-          echo "WARNING: No successful jobs with artifacts found for project $project_id. Skipping."
+        if [ "$JOB_WITH_ARTIFACTS" = "null" ]; then
+          echo "WARNING: No job with artifacts found in pipeline ${PIPELINE_ID}. Skipping."
           continue
         fi
         
-        echo "Found job $JOB_WITH_ARTIFACTS with artifacts to check."
-        TEMP_DIR=$(mktemp -d)
-        ARTIFACTS_ZIP="$TEMP_DIR/artifacts.zip"
+        # Get the list of all .pkg.tar.zst files in the artifacts
+        ARTIFACTS_BROWSE_URL="https://gitlab.com/api/v4/projects/${project_id}/jobs/${JOB_WITH_ARTIFACTS}/artifacts"
+        mapfile -t pkg_files < <(curl --silent --show-error --header "PRIVATE-TOKEN: $GITLAB_TOKEN" "$ARTIFACTS_BROWSE_URL" | jq -r '.[] | select(.filename | endswith(".pkg.tar.zst")) | .filename')
         
-        echo "Downloading artifacts to temporary location for inspection..."
-        curl --location --silent --show-error --header "PRIVATE-TOKEN: $GITLAB_TOKEN" --output "$ARTIFACTS_ZIP" \
-             "https://gitlab.com/api/v4/projects/${project_id}/jobs/${JOB_WITH_ARTIFACTS}/artifacts"
-        
-        if [ -f "$ARTIFACTS_ZIP" ] && [ -s "$ARTIFACTS_ZIP" ]; then
-          unzip -q "$ARTIFACTS_ZIP" -d "$TEMP_DIR"
-          
-          find "$TEMP_DIR" -name "*.pkg.tar.zst" -print0 | while IFS= read -r -d $'\0' remote_pkg_path; do
-            REMOTE_PKG_FILENAME=$(basename "$remote_pkg_path")
-            
-            if [ -f "public/x86_64/${REMOTE_PKG_FILENAME}" ]; then
-              echo "Package ${REMOTE_PKG_FILENAME} is already the latest version. Skipping."
-              continue
-            fi
-            
-            echo "New/updated package found: ${REMOTE_PKG_FILENAME}"
-            export REPO_UPDATED=true # Use export to make it visible in the next script block
-            
-            BASE_PKG_NAME=$(pacman -Qp "$remote_pkg_path" | awk '{print $1}')
-            
-            echo "Removing old versions of '${BASE_PKG_NAME}' from the repository..."
-            find public/x86_64/ -name "${BASE_PKG_NAME}-*.pkg.tar.zst" -delete
-            
-            echo "Adding new version to public/x86_64/"
-            mv "$remote_pkg_path" "public/x86_64/"
-          done
-        else
-            echo "WARNING: Failed to download artifacts for job $JOB_WITH_ARTIFACTS."
-        fi
-        
-        rm -rf "$TEMP_DIR"
-        echo "--- Finished processing project $project_id ---"
+        for pkg_file in "${pkg_files[@]}"; do
+          echo "Found remote package: ${pkg_file}"
+          remote_packages_map["${pkg_file}"]="${project_id}/${JOB_WITH_ARTIFACTS}"
+        done
       done
-
-    # --- 3. Create the Pacman Repository Database (Logic Corrected) ---
-    - cd public/x86_64
     - |
-      # First, decide if we need to run repo-add
+      echo "Total unique remote packages found: ${#remote_packages_map[@]}"
+    
+    # --- Step 2: Sync local repository with remote list ---
+    - REPO_UPDATED=false
+    
+    # 2a: Remove orphaned packages
+    - echo "Checking for orphaned packages in local repository..."
+    - |
+      for local_pkg_path in "${REPO_ARCH_DIR}"/*.pkg.tar.zst; do
+        [ -f "$local_pkg_path" ] || continue # Handle case where no local packages exist
+        local_pkg_filename=$(basename "$local_pkg_path")
+        if [[ ! -v remote_packages_map["${local_pkg_filename}"] ]]; then
+          echo "  -> Removing orphaned package: ${local_pkg_filename}"
+          rm "$local_pkg_path"
+          REPO_UPDATED=true
+        fi
+      done
+    
+    # 2b: Download new or updated packages
+    - echo "Checking for new packages to download..."
+    - |
+      for pkg_filename in "${!remote_packages_map[@]}"; do
+        if [ ! -f "${REPO_ARCH_DIR}/${pkg_filename}" ]; then
+          echo "  -> Downloading new package: ${pkg_filename}"
+          
+          # Extract project_id and job_id from our map
+          IFS='/' read -r project_id job_id <<< "${remote_packages_map[$pkg_filename]}"
+          
+          DOWNLOAD_URL="https://gitlab.com/api/v4/projects/${project_id}/jobs/${job_id}/artifacts/${pkg_filename}"
+          curl --location --silent --show-error --header "PRIVATE-TOKEN: $GITLAB_TOKEN" --output "${REPO_ARCH_DIR}/${pkg_filename}" "${DOWNLOAD_URL}"
+          REPO_UPDATED=true
+        fi
+      done
+      
+    # --- Step 3: Update repository database ---
+    - cd "${REPO_ARCH_DIR}"
+    - |
       if [ "$REPO_UPDATED" = true ]; then
-        echo "Repository was updated. Rebuilding database with repo-add..."
-        # This creates the database and the problematic symlinks
-        repo-add ${REPO_NAME}.db.tar.gz *.pkg.tar.zst
+        echo "Repository was updated. Rebuilding database..."
+        # Remove old database files to ensure a clean state
+        rm -f ${REPO_NAME}.*
+        repo-add "${REPO_NAME}.db.tar.gz" *.pkg.tar.zst
       else
-        echo "No packages were updated. The database files from cache will be used."
+        echo "No changes detected. Skipping database rebuild."
       fi
       
-      # --- ALWAYS RUN THIS FIX ---
-      # This ensures that no matter what, the final artifact sent to GitLab Pages
-      # does not contain symlinks, fixing the 403 error.
-      echo "Ensuring database is prepared for static hosting..."
+      # --- Step 4: CRITICAL FIX FOR GITLAB PAGES (403 ERROR) ---
+      # This must run every time to ensure the artifacts for Pages are correct,
+      # regardless of whether the database was rebuilt or restored from cache.
+      echo "Ensuring database files are compatible with static hosting..."
       if [ -f "${REPO_NAME}.db.tar.gz" ]; then
-        # Remove any symlinks that might exist from the cache or from repo-add
-        rm -f ${REPO_NAME}.db ${REPO_NAME}.files
-        
-        # Create hard copies for pacman to download
-        cp ${REPO_NAME}.db.tar.gz ${REPO_NAME}.db
-        cp ${REPO_NAME}.files.tar.gz ${REPO_NAME}.files
-        echo "Database files are correctly formatted."
+        # Remove symlinks and replace them with hard copies
+        rm -f "${REPO_NAME}.db" "${REPO_NAME}.files"
+        cp "${REPO_NAME}.db.tar.gz" "${REPO_NAME}.db"
+        cp "${REPO_NAME}.files.tar.gz" "${REPO_NAME}.files"
+        echo "Database files are correctly formatted for deployment."
       else
-        echo "No database file found to process. This might be the first run or an empty repo."
+        echo "No packages in repository. Creating empty database files."
+        touch "${REPO_NAME}.db" "${REPO_NAME}.files"
       fi
-    - cd ../..
-
-    # --- 4. Generate a Human-Readable HTML Index Page ---
-    - echo "Generating index.html..."
-    - |
-      cat > public/index.html << EOF
-      <!DOCTYPE html>
-      <html><head>
-        <title>${REPO_NAME} Package Repository</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <style>
-          body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji"; margin: 40px; line-height: 1.6; color: #333; background-color: #fdfdfd; }
-          .container { max-width: 800px; margin: 0 auto; }
-          h1, h2 { color: #111; border-bottom: 1px solid #eee; padding-bottom: 10px; }
-          pre { background-color: #f4f4f4; padding: 15px; border-radius: 5px; overflow-x: auto; }
-          code { font-family: "SF Mono", "Fira Code", "Source Code Pro", Menlo, Consolas, Monaco, monospace; }
-          .package-list a { display: block; padding: 8px 0; text-decoration: none; color: #007bff; }
-          .package-list a:hover { text-decoration: underline; }
-          .footer { margin-top: 40px; font-size: 0.9em; color: #777; }
-        </style>
-      </head><body>
-      <div class="container">
-        <h1>${REPO_NAME} Package Repository</h1>
-        <p>This is an unofficial package repository for Arch Linux.</p>
-        <h2>How to Use</h2>
-        <p>Add the following to your <code>/etc/pacman.conf</code> file:</p>
-        <pre><code>[${REPO_NAME}]
-      SigLevel = Optional TrustAll
-      Server = ${GITLAB_PAGES_URL}/x86_64</code></pre>
-        <p>Then, run <code>sudo pacman -Syu</code> to synchronize the new repository.</p>
-        <h2>Available Packages (x86_64)</h2>
-        <div class="package-list">
-      EOF
-    - |
-      if [ -z "$(find public/x86_64 -maxdepth 1 -name '*.pkg.tar.zst' -print -quit)" ]; then
-          echo "<p>No packages are available in this repository yet.</p>" >> public/index.html
-      else
-          for pkg in public/x86_64/*.pkg.tar.zst; do
-              PKG_NAME=$(basename "$pkg")
-              echo "<a href=\"x86_64/${PKG_NAME}\">${PKG_NAME}</a>" >> public/index.html
-          done
-      fi
-    - |
-      cat >> public/index.html << 'EOF'
-        </div>
-        <p class="footer">This repository is automatically generated by GitLab CI.</p>
-      </div>
-      </body></html>
-      EOF
-    - |
-      cat > public/x86_64/index.html << 'EOF'
-      <!DOCTYPE html>
-      <html><head><title>Index of /x86_64</title></head><body>
-      <h1>Index of /x86_64/</h1><hr><pre>
-      <a href="../">../</a>
-      EOF
-    - for f in public/x86_64/*; do F_NAME=$(basename "$f"); echo "<a href=\"$F_NAME\">$F_NAME</a>" >> public/x86_64/index.html; done
-    - |
-      cat >> public/x86_64/index.html << 'EOF'
-      </pre><hr></body></html>
-      EOF
-
-    - echo "Job finished. Repository and index page are ready."
+    - cd ../.. # Return to project root
 
   artifacts:
     paths:
-      - public
-  rules:
-    - if: '$CI_PIPELINE_SOURCE == "schedule"'
-    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "master"'
+      - "${REPO_DIR}/" # Make the entire public directory available for the deploy stage
+    expire_in: 1 hour
+
+# --- Stage 2: Deploy to GitLab Pages ---
+pages:
+  stage: deploy
+  needs:
+    - job: update_repository
+      artifacts: true
+  script:
+    - set -eo pipefail
+    - echo "Deploying repository to GitLab Pages..."
+    - |
+      if [ ! -d "${REPO_DIR}/x86_64" ] || [ -z "$(ls -A "${REPO_DIR}/x86_64")" ]; then
+        echo "Repository directory is empty or missing. Nothing to deploy."
+      else
+        echo "Contents of the repository to be deployed:"
+        ls -R "${REPO_DIR}"
+        echo "Deployment to GitLab Pages will proceed."
+      fi
+  artifacts:
+    paths:
+      - public # GitLab Pages specifically deploys the 'public' directory
+    expire_in: 1 week
