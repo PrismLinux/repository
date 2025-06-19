@@ -66,7 +66,6 @@ pages:
       cat <<EOF > public/index.html
       <html><head><title>${REPO_NAME^} Packages</title></head><body>
       <h1>${REPO_NAME^} Packages</h1>
-      <p>This is an Arch Linux package repository hosted on GitLab Pages.</p>
       <h2>Architectures:</h2><ul><li><a href="x86_64/index.html">x86_64</a></li></ul>
       </body></html>
       EOF
