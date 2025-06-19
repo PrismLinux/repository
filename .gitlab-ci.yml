@@ -20,6 +20,7 @@ image: archlinux:latest
 variables:
   REPO_NAME: "crystallinux"
   REPO_DIR: "public"
+  CI_PAGES_URL: "https://crystalnetwork-studio.gitlab.io/linux/CrystalLinux/repository/pkgbuilds/gitlab-profile/"
 
 workflow:
   rules:
