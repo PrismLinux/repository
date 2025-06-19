@@ -146,18 +146,145 @@ pages:
       # --- Step 4: CRITICAL FIX FOR GITLAB PAGES (403 ERROR) ---
       echo "Ensuring database files are compatible with static hosting..."
       if [ -f "${REPO_NAME}.db.tar.gz" ]; then
+        # Create symbolic links instead of copies for GitLab Pages compatibility
         rm -f "${REPO_NAME}.db" "${REPO_NAME}.files"
-        cp "${REPO_NAME}.db.tar.gz" "${REPO_NAME}.db"
-        cp "${REPO_NAME}.files.tar.gz" "${REPO_NAME}.files"
-        echo "Database files are correctly formatted."
+        ln -sf "${REPO_NAME}.db.tar.gz" "${REPO_NAME}.db"
+        ln -sf "${REPO_NAME}.files.tar.gz" "${REPO_NAME}.files"
+        
+        echo "Database files are correctly formatted with symbolic links."
+        echo "Files in repository:"
+        ls -la ${REPO_NAME}.*
       else
-        echo "No packages in repository. Creating empty placeholder files."
-        touch "${REPO_NAME}.db" "${REPO_NAME}.files"
+        echo "No packages in repository. Creating empty database files."
+        # Create empty tar.gz files for consistency
+        echo -n | gzip > "${REPO_NAME}.db.tar.gz"
+        echo -n | gzip > "${REPO_NAME}.files.tar.gz"
+        ln -sf "${REPO_NAME}.db.tar.gz" "${REPO_NAME}.db"
+        ln -sf "${REPO_NAME}.files.tar.gz" "${REPO_NAME}.files"
       fi
       
-      # --- Step 5: Return to root and create a dummy index.html ---
+      # Create .htaccess file for Apache compatibility (GitLab Pages)
+      cat > .htaccess << 'EOF'
+      # Enable access to database files
+      <Files "crystallinux.db">
+          Header set Content-Type "application/octet-stream"
+          Header set Content-Disposition "attachment"
+      </Files>
+      <Files "crystallinux.files">
+          Header set Content-Type "application/octet-stream" 
+          Header set Content-Disposition "attachment"
+      </Files>
+      EOF
+      
+      # --- Step 5: Return to root and create configuration files ---
       cd ../.. # Return to project root ($CI_PROJECT_DIR)
-      echo '<html><body><h1>CrystalLinux Repository</h1><a href="x86_64/">x86_64</a></body></html>' > "${REPO_DIR}/index.html"
+      
+      # Create index.html
+      cat > "${REPO_DIR}/index.html" << 'EOF'
+      <!DOCTYPE html>
+      <html lang="en">
+      <head>
+          <meta charset="UTF-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>CrystalLinux Repository</title>
+          <style>
+              body { font-family: Arial, sans-serif; margin: 40px; }
+              .container { max-width: 800px; margin: 0 auto; }
+              .code { background: #f4f4f4; padding: 10px; border-radius: 5px; font-family: monospace; }
+              .links { margin: 20px 0; }
+              .links a { display: inline-block; margin: 5px 10px 5px 0; padding: 8px 15px; background: #007acc; color: white; text-decoration: none; border-radius: 3px; }
+              .links a:hover { background: #005999; }
+          </style>
+      </head>
+      <body>
+          <div class="container">
+              <h1>CrystalLinux Repository</h1>
+              <p>Arch Linux compatible package repository for CrystalLinux distribution.</p>
+              
+              <div class="links">
+                  <a href="x86_64/">Browse Packages (x86_64)</a>
+                  <a href="README.md">Installation Instructions</a>
+                  <a href="crystallinux-repo.conf">Pacman Config</a>
+              </div>
+              
+              <h2>Quick Setup</h2>
+              <p>Add the following to your <code>/etc/pacman.conf</code>:</p>
+              <div class="code">
+      [crystallinux]<br>
+      Server = https://crystalnetwork-studio.gitlab.io/linux/CrystalLinux/repository/pkgbuilds/gitlab-profile/$repo/$arch<br>
+      SigLevel = Optional TrustAll
+              </div>
+              
+              <p>Then run:</p>
+              <div class="code">sudo pacman -Sy</div>
+          </div>
+      </body>
+      </html>
+      EOF
+      
+      # Create pacman configuration snippet for users
+      cat > "${REPO_DIR}/crystallinux-repo.conf" << 'EOF'
+      # Add this to your /etc/pacman.conf
+      [crystallinux]
+      Server = https://crystalnetwork-studio.gitlab.io/linux/CrystalLinux/repository/pkgbuilds/gitlab-profile/$repo/$arch
+      SigLevel = Optional TrustAll
+      EOF
+            
+            # Create installation instructions
+            cat > "${REPO_DIR}/README.md" << 'EOF'
+      # CrystalLinux Repository
+
+      ## Installation
+
+      Add the following to your `/etc/pacman.conf`:
+
+      ```
+      [crystallinux]
+      Server = https://crystalnetwork-studio.gitlab.io/linux/CrystalLinux/repository/pkgbuilds/gitlab-profile/$repo/$arch
+      SigLevel = Optional TrustAll
+      ```
+
+      Then run:
+      ```bash
+      sudo pacman -Sy
+      ```
+
+      ## Available Packages
+
+      - Check the [x86_64/](x86_64/) directory for available packages
+      - Database files: [crystallinux.db.tar.gz](x86_64/crystallinux.db.tar.gz), [crystallinux.files.tar.gz](x86_64/crystallinux.files.tar.gz)
+
+      ## Manual Database Access
+
+      If you encounter 403 errors, you can access the database files directly:
+      - Database: https://crystalnetwork-studio.gitlab.io/linux/CrystalLinux/repository/pkgbuilds/gitlab-profile/x86_64/crystallinux.db.tar.gz
+      - Files: https://crystalnetwork-studio.gitlab.io/linux/CrystalLinux/repository/pkgbuilds/gitlab-profile/x86_64/crystallinux.files.tar.gz
+
+      ## Troubleshooting
+
+      If pacman returns 403 errors when accessing the database, try:
+
+      1. Clear pacman cache: `sudo pacman -Scc`
+      2. Update package lists: `sudo pacman -Sy`
+      3. Use direct .tar.gz URLs in your pacman configuration
+
+      ### Alternative Configuration
+
+      If you continue to have issues, you can configure pacman to use the .tar.gz files directly by creating a custom configuration:
+
+      ```bash
+      sudo tee /etc/pacman.d/crystallinux.conf << 'EOF'
+      [crystallinux]
+      Server = https://crystalnetwork-studio.gitlab.io/linux/CrystalLinux/repository/pkgbuilds/gitlab-profile/$repo/$arch
+      SigLevel = Optional TrustAll
+      EOF
+      ```
+
+      Then include it in your main `/etc/pacman.conf`:
+      ```
+      Include = /etc/pacman.d/crystallinux.conf
+      ```
+      EOF
 
       # --- Step 6: FINAL DEBUGGING STEP ---
       # This will show us EXACTLY what is being sent to the artifacts uploader.
