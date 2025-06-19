@@ -6,7 +6,8 @@ image: archlinux:latest
 
 variables:
   REPO_NAME: "crystallinux"
-  REPO_DIR: "public" 
+  # The directory to be deployed to GitLab Pages MUST be named 'public'.
+  REPO_DIR: "public"
   PACKAGE_PROJECT_IDS: "70724583"
 
 workflow:
@@ -15,13 +16,14 @@ workflow:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE == 'push'
 
 # --- Cache ---
+# Caches the repository contents to avoid re-downloading packages that haven't changed.
 cache:
   key: "repo-cache-${CI_COMMIT_REF_SLUG}"
   paths:
     - "${REPO_DIR}/"
   policy: pull-push
 
-# --- The combined build and deploy job ---
+# --- The single, combined build and deploy job ---
 pages:
   stage: deploy
   
@@ -30,17 +32,19 @@ pages:
     - pacman -S --noconfirm curl jq base-devel git
   
   script:
-    - set -eo pipefail # Exit on any error
-    - REPO_ARCH_DIR="${REPO_DIR}/x86_64"
-    - mkdir -p "${REPO_ARCH_DIR}"
-    - echo "Repository directory is ${REPO_ARCH_DIR}"
-    - echo "Initial contents from cache:"
-    - ls -R "${REPO_DIR}"
-    
-    # --- Step 1: Get a list of ALL expected remote packages ---
-    - declare -A remote_packages_map # Use an associative array for efficient lookups
-    - echo "Fetching list of all available remote packages..."
+    # We use a single script block to ensure all variables exist in the same shell.
     - |
+      set -eo pipefail # Exit on any error
+      REPO_ARCH_DIR="${REPO_DIR}/x86_64"
+      mkdir -p "${REPO_ARCH_DIR}"
+      echo "Repository directory is ${REPO_ARCH_DIR}"
+      echo "Initial contents from cache:"
+      ls -R "${REPO_DIR}"
+
+      # --- Step 1: Get a list of ALL expected remote packages ---
+      declare -A remote_packages_map # Use an associative array for efficient lookups
+      echo "Fetching list of all available remote packages..."
+      
       for project_id in $PACKAGE_PROJECT_IDS; do
         echo "--> Checking project ID: ${project_id}"
         
@@ -60,7 +64,6 @@ pages:
           continue
         fi
         
-        # This API endpoint lists files inside the artifact zip without downloading it
         ARTIFACTS_BROWSE_URL="https://gitlab.com/api/v4/projects/${project_id}/jobs/${JOB_WITH_ARTIFACTS}/artifacts"
         mapfile -t pkg_files < <(curl --silent --show-error --header "PRIVATE-TOKEN: $GITLAB_TOKEN" "$ARTIFACTS_BROWSE_URL" | jq -r '.[] | select(.filename | endswith(".pkg.tar.zst")) | .filename')
         
@@ -69,17 +72,15 @@ pages:
           remote_packages_map["${pkg_file}"]="${project_id}/${JOB_WITH_ARTIFACTS}"
         done
       done
-    - |
       echo "Total unique remote packages found: ${#remote_packages_map[@]}"
-    
-    # --- Step 2: Sync local repository with remote list ---
-    - REPO_UPDATED=false
-    
-    # 2a: Remove orphaned packages
-    - echo "Checking for orphaned packages in local repository..."
-    - |
+      
+      # --- Step 2: Sync local repository with remote list ---
+      REPO_UPDATED=false
+      
+      # 2a: Remove orphaned packages
+      echo "Checking for orphaned packages in local repository..."
       for local_pkg_path in "${REPO_ARCH_DIR}"/*.pkg.tar.zst; do
-        [ -f "$local_pkg_path" ] || continue # Handle case where no local packages exist
+        [ -f "$local_pkg_path" ] || continue
         local_pkg_filename=$(basename "$local_pkg_path")
         if [[ ! -v remote_packages_map["${local_pkg_filename}"] ]]; then
           echo "  -> Removing orphaned package: ${local_pkg_filename}"
@@ -87,43 +88,37 @@ pages:
           REPO_UPDATED=true
         fi
       done
-    
-    # 2b: Download new or updated packages
-    - echo "Checking for new packages to download..."
-    - |
+      
+      # 2b: Download new or updated packages
+      echo "Checking for new packages to download..."
       for pkg_filename in "${!remote_packages_map[@]}"; do
         if [ ! -f "${REPO_ARCH_DIR}/${pkg_filename}" ]; then
           echo "  -> Downloading new package: ${pkg_filename}"
-          
-          # Extract project_id and job_id from our map
           IFS='/' read -r project_id job_id <<< "${remote_packages_map[$pkg_filename]}"
-          
           DOWNLOAD_URL="https://gitlab.com/api/v4/projects/${project_id}/jobs/${job_id}/artifacts/${pkg_filename}"
           curl --location --silent --show-error --header "PRIVATE-TOKEN: $GITLAB_TOKEN" --output "${REPO_ARCH_DIR}/${pkg_filename}" "${DOWNLOAD_URL}"
           REPO_UPDATED=true
         fi
       done
       
-    # --- Step 3: Update repository database ---
-    - cd "${REPO_ARCH_DIR}"
-    - |
-      # We check for *.pkg.tar.zst files in case the repo is empty after sync.
+      # --- Step 3: Update repository database ---
+      cd "${REPO_ARCH_DIR}"
+      
       if ! ls ./*.pkg.tar.zst 1> /dev/null 2>&1; then
-        echo "Repository is empty. Clearing database files."
+        echo "Repository is empty after sync. Clearing any old database files."
         rm -f ${REPO_NAME}.*
-        REPO_UPDATED=false # Don't try to build a db from nothing
+        REPO_UPDATED=false
       fi
 
       if [ "$REPO_UPDATED" = true ]; then
         echo "Repository was updated. Rebuilding database..."
-        rm -f ${REPO_NAME}.* # Clean old db files
+        rm -f ${REPO_NAME}.*
         repo-add "${REPO_NAME}.db.tar.gz" *.pkg.tar.zst
       else
         echo "No changes detected. Using database from cache."
       fi
       
       # --- Step 4: CRITICAL FIX FOR GITLAB PAGES (403 ERROR) ---
-      # This runs every time to guarantee the final artifact is correct.
       echo "Ensuring database files are compatible with static hosting..."
       if [ -f "${REPO_NAME}.db.tar.gz" ]; then
         rm -f "${REPO_NAME}.db" "${REPO_NAME}.files"
@@ -131,10 +126,22 @@ pages:
         cp "${REPO_NAME}.files.tar.gz" "${REPO_NAME}.files"
         echo "Database files are correctly formatted."
       else
-        echo "No packages in repository. Creating empty database files for consistency."
+        echo "No packages in repository. Creating empty placeholder files."
         touch "${REPO_NAME}.db" "${REPO_NAME}.files"
       fi
-    - cd ../.. # Return to project root
+      
+      # --- Step 5: Return to root and create a dummy index.html ---
+      cd ../.. # Return to project root ($CI_PROJECT_DIR)
+      echo '<html><body><h1>CrystalLinux Repository</h1><a href="x86_64/">x86_64</a></body></html>' > "${REPO_DIR}/index.html"
+
+      # --- Step 6: FINAL DEBUGGING STEP ---
+      # This will show us EXACTLY what is being sent to the artifacts uploader.
+      echo "-----------------------------------------"
+      echo "Final check before artifact upload:"
+      echo "Current directory: $(pwd)"
+      echo "Listing all files recursively..."
+      ls -laR
+      echo "-----------------------------------------"
 
   artifacts:
     paths:
