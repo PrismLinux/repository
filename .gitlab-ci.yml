@@ -20,7 +20,7 @@ image: archlinux:latest
 variables:
   REPO_NAME: "crystallinux"
   REPO_DIR: "public"
-  PACKAGE_PROJECT_IDS: "70724583"
+  PACKAGE_PROJECT_IDS: "70724583 70964684"
 
 workflow:
   rules:
