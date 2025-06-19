@@ -35,7 +35,6 @@ cache:
     - "${REPO_DIR}/"
   policy: pull-push
 
-# --- The single, combined build and deploy job ---
 pages:
   stage: deploy
   
@@ -44,7 +43,6 @@ pages:
     - pacman -S --noconfirm curl jq base-devel git
   
   script:
-    # We use a single script block to ensure all variables exist in the same shell.
     - |
       set -eo pipefail # Exit on any error
       REPO_ARCH_DIR="${REPO_DIR}/x86_64"
@@ -214,7 +212,6 @@ pages:
               <p>Arch Linux compatible package repository for CrystalLinux distribution.</p>
               
               <div class="links">
-                  <a href="x86_64/">Browse Packages (x86_64)</a>
                   <a href="README.md">Installation Instructions</a>
                   <a href="crystallinux-repo.conf">Pacman Config</a>
               </div>
@@ -263,7 +260,6 @@ pages:
 
       ## Available Packages
 
-      - Check the [x86_64/](x86_64/) directory for available packages
       - Database files: [crystallinux.db.tar.gz](x86_64/crystallinux.db.tar.gz), [crystallinux.files.tar.gz](x86_64/crystallinux.files.tar.gz)
 
       ## Manual Database Access
@@ -299,7 +295,6 @@ pages:
       EOF
 
       # --- Step 6: FINAL DEBUGGING STEP ---
-      # This will show us EXACTLY what is being sent to the artifacts uploader.
       echo "-----------------------------------------"
       echo "Final check before artifact upload:"
       echo "Current directory: $(pwd)"
@@ -309,5 +304,4 @@ pages:
 
   artifacts:
     paths:
-      # This is the directory that GitLab Pages will deploy.
       - public
