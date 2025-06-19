@@ -27,7 +27,6 @@ workflow:
     - if: $CI_PIPELINE_SOURCE == 'schedule'
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE == 'push'
 
-# --- Cache ---
 cache:
   key: "repo-cache-${CI_COMMIT_REF_SLUG}"
   paths:
@@ -43,21 +42,15 @@ pages:
   
   script:
     - |
-      set -eo pipefail # Exit on any error
+      set -eo pipefail
       REPO_ARCH_DIR="${REPO_DIR}/x86_64"
       mkdir -p "${REPO_ARCH_DIR}"
-      echo "Repository directory is ${REPO_ARCH_DIR}"
-      echo "Initial contents from cache:"
-      ls -R "${REPO_DIR}"
-
+      
       # --- Step 1: Get a list of ALL expected remote packages from releases ---
-      declare -A remote_packages_map # Use an associative array for efficient lookups
+      declare -A remote_packages_map
       echo "Fetching list of all available remote packages from releases..."
       
       for project_id in $PACKAGE_PROJECT_IDS; do
-        echo "--> Checking project ID: ${project_id}"
-        
-        # Get the latest release
         RELEASES_API_URL="https://gitlab.com/api/v4/projects/${project_id}/releases"
         LATEST_RELEASE=$(curl --silent --show-error --header "PRIVATE-TOKEN: $GITLAB_TOKEN" "$RELEASES_API_URL" | jq -r '.[0]')
         
@@ -66,38 +59,18 @@ pages:
           continue
         fi
         
-        # Extract release tag and assets
-        RELEASE_TAG=$(echo "$LATEST_RELEASE" | jq -r '.tag_name')
-        echo "Found latest release: ${RELEASE_TAG}"
-        
-        # Get release assets (links)
-        RELEASE_ASSETS=$(echo "$LATEST_RELEASE" | jq -r '.assets.links[]?')
-        
-        if [ -z "$RELEASE_ASSETS" ]; then
-          echo "WARNING: No assets found in release ${RELEASE_TAG}. Skipping."
-          continue
-        fi
-        
-        # Process each asset link
         while IFS= read -r asset; do
           if [ -z "$asset" ]; then continue; fi
-          
           ASSET_URL=$(echo "$asset" | jq -r '.url')
           ASSET_NAME=$(echo "$asset" | jq -r '.name')
           
-          # Check if it's a package file
           if [[ "$ASSET_NAME" == *.pkg.tar.zst ]]; then
-            echo "Found remote package: ${ASSET_NAME}"
             remote_packages_map["${ASSET_NAME}"]="${ASSET_URL}"
           fi
         done <<< "$(echo "$LATEST_RELEASE" | jq -c '.assets.links[]?')"
       done
-      echo "Total unique remote packages found: ${#remote_packages_map[@]}"
       
       # --- Step 2: Sync local repository with remote list ---
-      REPO_UPDATED=false
-      
-      # 2a: Remove orphaned packages
       echo "Checking for orphaned packages in local repository..."
       for local_pkg_path in "${REPO_ARCH_DIR}"/*.pkg.tar.zst; do
         [ -f "$local_pkg_path" ] || continue
@@ -105,76 +78,46 @@ pages:
         if [[ ! -v remote_packages_map["${local_pkg_filename}"] ]]; then
           echo "  -> Removing orphaned package: ${local_pkg_filename}"
           rm "$local_pkg_path"
-          REPO_UPDATED=true
         fi
       done
       
-      # 2b: Download new or updated packages
       echo "Checking for new packages to download..."
       for pkg_filename in "${!remote_packages_map[@]}"; do
         if [ ! -f "${REPO_ARCH_DIR}/${pkg_filename}" ]; then
           echo "  -> Downloading new package: ${pkg_filename}"
           DOWNLOAD_URL="${remote_packages_map[$pkg_filename]}"
-          
-          # Download the package with proper error handling
-          if curl --location --silent --show-error --fail --header "PRIVATE-TOKEN: $GITLAB_TOKEN" --output "${REPO_ARCH_DIR}/${pkg_filename}" "${DOWNLOAD_URL}"; then
-            echo "    Successfully downloaded: ${pkg_filename}"
-            REPO_UPDATED=true
-          else
+          if ! curl --location --silent --show-error --fail --header "PRIVATE-TOKEN: $GITLAB_TOKEN" --output "${REPO_ARCH_DIR}/${pkg_filename}" "${DOWNLOAD_URL}"; then
             echo "    ERROR: Failed to download ${pkg_filename} from ${DOWNLOAD_URL}"
-            # Remove partial file if it exists
             rm -f "${REPO_ARCH_DIR}/${pkg_filename}"
           fi
-        else
-          echo "  -> Package already exists in cache: ${pkg_filename}"
         fi
       done
       
       # --- Step 3: Update repository database ---
+      echo "Updating repository database..."
       cd "${REPO_ARCH_DIR}"
       
-      if ! ls ./*.pkg.tar.zst 1> /dev/null 2>&1; then
-        echo "Repository is empty after sync. Clearing any old database files."
-        rm -f ${REPO_NAME}.*
-        REPO_UPDATED=false
-      fi
+      rm -f ${REPO_NAME}.db ${REPO_NAME}.db.tar.gz ${REPO_NAME}.files ${REPO_NAME}.files.tar.gz
 
-      if [ "$REPO_UPDATED" = true ]; then
-        echo "Repository was updated. Rebuilding database..."
-        rm -f ${REPO_NAME}.*
+      if ls ./*.pkg.tar.zst 1> /dev/null 2>&1; then
+        echo "Found packages. Rebuilding repository database..."
         repo-add "${REPO_NAME}.db.tar.gz" *.pkg.tar.zst
       else
-        echo "No changes detected. Using database from cache."
-        # Ensure database files exist even if no updates
-        if [ ! -f "${REPO_NAME}.db.tar.gz" ] && ls ./*.pkg.tar.zst 1> /dev/null 2>&1; then
-          echo "Database missing but packages exist. Rebuilding database..."
-          repo-add "${REPO_NAME}.db.tar.gz" *.pkg.tar.zst
-        fi
+        echo "No packages found in repository. The database will be empty."
       fi
       
       # --- Step 4: CRITICAL FIX FOR GITLAB PAGES (403 ERROR) ---
       echo "Ensuring database files are compatible with static hosting..."
       if [ -f "${REPO_NAME}.db.tar.gz" ]; then
-        # Create symbolic links instead of copies for GitLab Pages compatibility
-        rm -f "${REPO_NAME}.db" "${REPO_NAME}.files"
         ln -sf "${REPO_NAME}.db.tar.gz" "${REPO_NAME}.db"
         ln -sf "${REPO_NAME}.files.tar.gz" "${REPO_NAME}.files"
-        
-        echo "Database files are correctly formatted with symbolic links."
-        echo "Files in repository:"
-        ls -la ${REPO_NAME}.*
       else
-        echo "No packages in repository. Creating empty database files."
-        # Create empty tar.gz files for consistency
-        echo -n | gzip > "${REPO_NAME}.db.tar.gz"
-        echo -n | gzip > "${REPO_NAME}.files.tar.gz"
+        touch "${REPO_NAME}.db.tar.gz" "${REPO_NAME}.files.tar.gz"
         ln -sf "${REPO_NAME}.db.tar.gz" "${REPO_NAME}.db"
         ln -sf "${REPO_NAME}.files.tar.gz" "${REPO_NAME}.files"
       fi
       
-      # Create .htaccess file for Apache compatibility (GitLab Pages)
       cat > .htaccess << 'EOF'
-      # Enable access to database files
       <Files "crystallinux.db">
           Header set Content-Type "application/octet-stream"
           Header set Content-Disposition "attachment"
@@ -183,14 +126,11 @@ pages:
           Header set Content-Type "application/octet-stream" 
           Header set Content-Disposition "attachment"
       </Files>
-      EOF
+        EOF
       
       # --- Step 5: Generate package metadata JSON for web interface ---
       echo "Generating package metadata for web interface..."
-      # Use a relative path to create the 'api' directory in the correct location (project_root/public/api)
       mkdir -p "../../${REPO_DIR}/api"
-      
-      # Define the path to the JSON file relative to the project root
       PACKAGES_JSON="../../${REPO_DIR}/api/packages.json"
       
       echo "[" > "$PACKAGES_JSON"
@@ -198,34 +138,18 @@ pages:
       
       for pkg_file in *.pkg.tar.zst; do
         [ -f "$pkg_file" ] || continue
-        
-        # Add comma separator for all but first package
-        if [ "$first_package" = false ]; then
-          echo "," >> "$PACKAGES_JSON"
-        fi
+        if [ "$first_package" = false ]; then echo "," >> "$PACKAGES_JSON"; fi
         first_package=false
-        
-        # Extract package info using pacman
         pkg_info=$(pacman -Qip "$pkg_file" 2>/dev/null || echo "")
-        
-        # Parse package information
-        pkg_name=$(echo "$pkg_info" | grep "^Name" | sed 's/Name[[:space:]]*:[[:space:]]*//')
-        pkg_version=$(echo "$pkg_info" | grep "^Version" | sed 's/Version[[:space:]]*:[[:space:]]*//')
-        pkg_desc=$(echo "$pkg_info" | grep "^Description" | sed 's/Description[[:space:]]*:[[:space:]]*//')
+        pkg_name=$(echo "$pkg_info" | grep "^Name" | sed 's/Name[[:space:]]*:[[:space:]]*//' | sed 's/"/\\"/g')
+        pkg_version=$(echo "$pkg_info" | grep "^Version" | sed 's/Version[[:space:]]*:[[:space:]]*//' | sed 's/"/\\"/g')
+        pkg_desc=$(echo "$pkg_info" | grep "^Description" | sed 's/Description[[:space:]]*:[[:space:]]*//' | sed 's/"/\\"/g')
         pkg_arch=$(echo "$pkg_info" | grep "^Architecture" | sed 's/Architecture[[:space:]]*:[[:space:]]*//')
         pkg_size=$(ls -lh "$pkg_file" | awk '{print $5}')
         pkg_date=$(date -r "$pkg_file" '+%Y-%m-%d %H:%M:%S')
-        pkg_depends=$(echo "$pkg_info" | grep "^Depends On" | sed 's/Depends On[[:space:]]*:[[:space:]]*//')
-        pkg_groups=$(echo "$pkg_info" | grep "^Groups" | sed 's/Groups[[:space:]]*:[[:space:]]*//')
+        pkg_depends=$(echo "$pkg_info" | grep "^Depends On" | sed 's/Depends On[[:space:]]*:[[:space:]]*//' | sed 's/"/\\"/g')
+        pkg_groups=$(echo "$pkg_info" | grep "^Groups" | sed 's/Groups[[:space:]]*:[[:space:]]*//' | sed 's/"/\\"/g')
         
-        # Escape JSON strings
-        pkg_name=$(echo "$pkg_name" | sed 's/"/\\"/g')
-        pkg_version=$(echo "$pkg_version" | sed 's/"/\\"/g')
-        pkg_desc=$(echo "$pkg_desc" | sed 's/"/\\"/g')
-        pkg_depends=$(echo "$pkg_depends" | sed 's/"/\\"/g')
-        pkg_groups=$(echo "$pkg_groups" | sed 's/"/\\"/g')
-        
-        # Write JSON object
         cat >> "$PACKAGES_JSON" << EOF
       {
         "name": "${pkg_name:-Unknown}",
@@ -238,16 +162,14 @@ pages:
         "depends": "${pkg_depends:-None}",
         "groups": "${pkg_groups:-None}"
       }
-      EOF
+        EOF
       done
-      
       echo "" >> "$PACKAGES_JSON"
       echo "]" >> "$PACKAGES_JSON"
       
       # --- Step 6: Return to root and create enhanced web interface ---
-      cd ../.. # Return to project root ($CI_PROJECT_DIR)
+      cd ../..
       
-      # Create enhanced index.html with package browsing and search
       cat > "${REPO_DIR}/index.html" << 'EOF'
       <!DOCTYPE html>
       <html lang="en">
@@ -519,7 +441,6 @@ pages:
               let allPackages = [];
               let filteredPackages = [];
               
-              // Tab switching
               function showTab(tabName) {
                   document.querySelectorAll('.nav-tab').forEach(tab => tab.classList.remove('active'));
                   document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
@@ -532,7 +453,6 @@ pages:
                   }
               }
               
-              // Load packages from API
               async function loadPackages() {
                   try {
                       const response = await fetch('./api/packages.json');
@@ -547,13 +467,11 @@ pages:
                   }
               }
               
-              // Update statistics
               function updateStats() {
                   document.getElementById('total-packages').textContent = allPackages.length;
                   document.getElementById('filtered-packages').textContent = filteredPackages.length;
               }
               
-              // Render packages
               function renderPackages() {
                   const container = document.getElementById('packages-container');
                   
@@ -579,13 +497,11 @@ pages:
                   container.innerHTML = `<div class="package-grid">${html}</div>`;
               }
               
-              // Filter and sort packages
               function filterPackages() {
                   const searchTerm = document.getElementById('search-input').value.toLowerCase();
                   const archFilter = document.getElementById('arch-filter').value;
                   const sortBy = document.getElementById('sort-filter').value;
                   
-                  // Filter by search term and architecture
                   filteredPackages = allPackages.filter(pkg => {
                       const matchesSearch = pkg.name.toLowerCase().includes(searchTerm) || 
                                           pkg.description.toLowerCase().includes(searchTerm);
@@ -593,7 +509,6 @@ pages:
                       return matchesSearch && matchesArch;
                   });
                   
-                  // Sort packages
                   filteredPackages.sort((a, b) => {
                       switch (sortBy) {
                           case 'name':
@@ -613,7 +528,6 @@ pages:
                   renderPackages();
               }
               
-              // Setup event listeners
               function setupEventListeners() {
                   document.getElementById('search-input').addEventListener('input', filterPackages);
                   document.getElementById('arch-filter').addEventListener('change', filterPackages);
@@ -622,9 +536,8 @@ pages:
           </script>
       </body>
       </html>
-      EOF
+        EOF
 
-      # Create API endpoint for package search
       cat > "${REPO_DIR}/api/search.html" << 'EOF'
       <!DOCTYPE html>
       <html>
@@ -633,7 +546,6 @@ pages:
       </head>
       <body>
           <script>
-              // Simple client-side search API
               const urlParams = new URLSearchParams(window.location.search);
               const query = urlParams.get('q');
               const format = urlParams.get('format') || 'json';
@@ -657,14 +569,12 @@ pages:
           </script>
       </body>
       </html>
-      EOF
+        EOF
       
       # --- Step 7: FINAL STEP ---
       echo "-----------------------------------------"
       echo "Final check before artifact upload:"
-      echo "Current directory: $(pwd)"
-      echo "Listing all files recursively..."
-      ls -laR
+      ls -laR public
       echo "-----------------------------------------"
 
   artifacts:
