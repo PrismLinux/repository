@@ -30,7 +30,7 @@ workflow:
 cache:
   key: "repo-cache-${CI_COMMIT_REF_SLUG}"
   paths:
-    - "${REPO_DIR}/"
+    - "${REPO_DIR}/x86_64/"
   policy: pull-push
 
 pages:
@@ -46,7 +46,10 @@ pages:
       REPO_ARCH_DIR="${REPO_DIR}/x86_64"
       mkdir -p "${REPO_ARCH_DIR}"
       
-      # --- Step 1: Get a list of ALL expected remote packages from releases ---
+      echo "Cleaning up previously generated web files..."
+      rm -f "${REPO_DIR}/index.html"
+      rm -rf "${REPO_DIR}/api"
+
       declare -A remote_packages_map
       echo "Fetching list of all available remote packages from releases..."
       
@@ -70,7 +73,6 @@ pages:
         done <<< "$(echo "$LATEST_RELEASE" | jq -c '.assets.links[]?')"
       done
       
-      # --- Step 2: Sync local repository with remote list ---
       echo "Checking for orphaned packages in local repository..."
       for local_pkg_path in "${REPO_ARCH_DIR}"/*.pkg.tar.zst; do
         [ -f "$local_pkg_path" ] || continue
@@ -93,7 +95,6 @@ pages:
         fi
       done
       
-      # --- Step 3: Update repository database ---
       echo "Updating repository database..."
       cd "${REPO_ARCH_DIR}"
       
@@ -106,7 +107,6 @@ pages:
         echo "No packages found in repository. The database will be empty."
       fi
       
-      # --- Step 4: CRITICAL FIX FOR GITLAB PAGES (403 ERROR) ---
       echo "Ensuring database files are compatible with static hosting..."
       if [ -f "${REPO_NAME}.db.tar.gz" ]; then
         ln -sf "${REPO_NAME}.db.tar.gz" "${REPO_NAME}.db"
@@ -118,17 +118,16 @@ pages:
       fi
       
       cat > .htaccess << 'EOF'
-      <Files "crystallinux.db">
-          Header set Content-Type "application/octet-stream"
-          Header set Content-Disposition "attachment"
-      </Files>
-      <Files "crystallinux.files">
-          Header set Content-Type "application/octet-stream" 
-          Header set Content-Disposition "attachment"
-      </Files>
+        <Files "crystallinux.db">
+            Header set Content-Type "application/octet-stream"
+            Header set Content-Disposition "attachment"
+        </Files>
+        <Files "crystallinux.files">
+            Header set Content-Type "application/octet-stream" 
+            Header set Content-Disposition "attachment"
+        </Files>
         EOF
-      
-      # --- Step 5: Generate package metadata JSON for web interface ---
+        
       echo "Generating package metadata for web interface..."
       mkdir -p "../../${REPO_DIR}/api"
       PACKAGES_JSON="../../${REPO_DIR}/api/packages.json"
@@ -151,7 +150,7 @@ pages:
         pkg_groups=$(echo "$pkg_info" | grep "^Groups" | sed 's/Groups[[:space:]]*:[[:space:]]*//' | sed 's/"/\\"/g')
         
         cat >> "$PACKAGES_JSON" << EOF
-      {
+        {
         "name": "${pkg_name:-Unknown}",
         "version": "${pkg_version:-Unknown}",
         "description": "${pkg_desc:-No description available}",
@@ -161,417 +160,415 @@ pages:
         "modified": "$pkg_date",
         "depends": "${pkg_depends:-None}",
         "groups": "${pkg_groups:-None}"
-      }
+        }
         EOF
       done
       echo "" >> "$PACKAGES_JSON"
       echo "]" >> "$PACKAGES_JSON"
       
-      # --- Step 6: Return to root and create enhanced web interface ---
       cd ../..
       
       cat > "${REPO_DIR}/index.html" << 'EOF'
-      <!DOCTYPE html>
-      <html lang="en">
-      <head>
-          <meta charset="UTF-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1.0">
-          <title>CrystalLinux Repository</title>
-          <style>
-              * { box-sizing: border-box; }
-              body { 
-                  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
-                  margin: 0; 
-                  padding: 20px; 
-                  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                  color: #333;
-                  min-height: 100vh;
-              }
-              .container { 
-                  max-width: 1200px; 
-                  margin: 0 auto; 
-                  background: white;
-                  border-radius: 10px;
-                  box-shadow: 0 10px 30px rgba(0,0,0,0.2);
-                  overflow: hidden;
-              }
-              .header {
-                  background: linear-gradient(45deg, #2c3e50, #3498db);
-                  color: white;
-                  padding: 30px;
-                  text-align: center;
-              }
-              .header h1 { margin: 0; font-size: 2.5em; }
-              .header p { margin: 10px 0 0 0; opacity: 0.9; }
-              
-              .nav-tabs {
-                  display: flex;
-                  background: #f8f9fa;
-                  border-bottom: 1px solid #ddd;
-              }
-              .nav-tab {
-                  padding: 15px 25px;
-                  cursor: pointer;
-                  border: none;
-                  background: none;
-                  font-size: 16px;
-                  transition: all 0.3s;
-              }
-              .nav-tab.active {
-                  background: white;
-                  border-bottom: 3px solid #3498db;
-                  color: #3498db;
-              }
-              .nav-tab:hover:not(.active) {
-                  background: #e9ecef;
-              }
-              
-              .tab-content {
-                  display: none;
-                  padding: 30px;
-              }
-              .tab-content.active {
-                  display: block;
-              }
-              
-              .setup-section {
-                  background: #f8f9fa;
-                  padding: 20px;
-                  border-radius: 8px;
-                  margin: 20px 0;
-              }
-              .code { 
-                  background: #2c3e50; 
-                  color: #ecf0f1;
-                  padding: 15px; 
-                  border-radius: 5px; 
-                  font-family: 'Courier New', monospace;
-                  overflow-x: auto;
-                  margin: 10px 0;
-              }
-              
-              .search-container {
-                  margin-bottom: 20px;
-              }
-              .search-input {
-                  width: 100%;
-                  padding: 12px;
-                  font-size: 16px;
-                  border: 2px solid #ddd;
-                  border-radius: 6px;
-                  transition: border-color 0.3s;
-              }
-              .search-input:focus {
-                  outline: none;
-                  border-color: #3498db;
-              }
-              
-              .filters {
-                  display: flex;
-                  gap: 15px;
-                  margin-bottom: 20px;
-                  flex-wrap: wrap;
-              }
-              .filter-select {
-                  padding: 8px 12px;
-                  border: 1px solid #ddd;
-                  border-radius: 4px;
-                  background: white;
-              }
-              
-              .package-grid {
-                  display: grid;
-                  gap: 20px;
-                  grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
-              }
-              .package-card {
-                  border: 1px solid #ddd;
-                  border-radius: 8px;
-                  padding: 20px;
-                  transition: all 0.3s;
-                  background: white;
-              }
-              .package-card:hover {
-                  box-shadow: 0 5px 15px rgba(0,0,0,0.1);
-                  transform: translateY(-2px);
-              }
-              .package-name {
-                  font-size: 1.3em;
-                  font-weight: bold;
-                  color: #2c3e50;
-                  margin-bottom: 8px;
-              }
-              .package-version {
-                  color: #3498db;
-                  font-weight: 500;
-                  margin-bottom: 10px;
-              }
-              .package-desc {
-                  color: #666;
-                  margin-bottom: 15px;
-                  line-height: 1.4;
-              }
-              .package-meta {
-                  font-size: 0.9em;
-                  color: #888;
-              }
-              .package-meta span {
-                  display: inline-block;
-                  margin-right: 15px;
-                  margin-bottom: 5px;
-              }
-              .download-btn {
-                  background: #27ae60;
-                  color: white;
-                  padding: 8px 16px;
-                  border: none;
-                  border-radius: 4px;
-                  cursor: pointer;
-                  text-decoration: none;
-                  display: inline-block;
-                  margin-top: 10px;
-                  transition: background 0.3s;
-              }
-              .download-btn:hover {
-                  background: #219a52;
-              }
-              
-              .loading {
-                  text-align: center;
-                  padding: 40px;
-                  color: #666;
-              }
-              .no-results {
-                  text-align: center;
-                  padding: 40px;
-                  color: #666;
-                  font-style: italic;
-              }
-              
-              .stats {
-                  display: flex;
-                  justify-content: space-around;
-                  background: #f8f9fa;
-                  padding: 20px;
-                  border-radius: 8px;
-                  margin-bottom: 20px;
-              }
-              .stat-item {
-                  text-align: center;
-              }
-              .stat-number {
-                  font-size: 2em;
-                  font-weight: bold;
-                  color: #3498db;
-              }
-              .stat-label {
-                  color: #666;
-                  margin-top: 5px;
-              }
-          </style>
-      </head>
-      <body>
-          <div class="container">
-              <div class="header">
-                  <h1>CrystalLinux Repository</h1>
-                  <p>Arch Linux compatible package repository for CrystalLinux distribution</p>
-              </div>
-              
-              <div class="nav-tabs">
-                  <button class="nav-tab active" onclick="showTab('setup')">Setup</button>
-                  <button class="nav-tab" onclick="showTab('packages')">Browse Packages</button>
-              </div>
-              
-              <div id="setup-tab" class="tab-content active">
-                  <h2>Repository Setup</h2>
-                  <div class="setup-section">
-                      <h3>Quick Setup</h3>
-                      <p>Add the following to your <code>/etc/pacman.conf</code>:</p>
-                      <div class="code">[crystallinux]<br>Server = https://crystalnetwork-studio.gitlab.io/linux/CrystalLinux/repository/pkgbuilds/gitlab-profile/$arch<br>SigLevel = Optional TrustAll</div>
-                      
-                      <p>Then run:</p>
-                      <div class="code">sudo pacman -Sy</div>
-                      
-                      <h3>Install Packages</h3>
-                      <p>Install packages from the repository:</p>
-                      <div class="code">sudo pacman -S package-name</div>
-                      
-                      <h3>Search Repository</h3>
-                      <p>Search for available packages:</p>
-                      <div class="code">pacman -Ss crystallinux/</div>
-                  </div>
-              </div>
-              
-              <div id="packages-tab" class="tab-content">
-                  <div class="stats" id="stats-container">
-                      <div class="stat-item">
-                          <div class="stat-number" id="total-packages">0</div>
-                          <div class="stat-label">Total Packages</div>
-                      </div>
-                      <div class="stat-item">
-                          <div class="stat-number" id="filtered-packages">0</div>
-                          <div class="stat-label">Shown</div>
-                      </div>
-                  </div>
-                  
-                  <div class="search-container">
-                      <input type="text" class="search-input" id="search-input" placeholder="Search packages by name or description...">
-                  </div>
-                  
-                  <div class="filters">
-                      <select class="filter-select" id="arch-filter">
-                          <option value="">All Architectures</option>
-                          <option value="x86_64">x86_64</option>
-                          <option value="any">any</option>
-                      </select>
-                      <select class="filter-select" id="sort-filter">
-                          <option value="name">Sort by Name</option>
-                          <option value="date">Sort by Date</option>
-                          <option value="size">Sort by Size</option>
-                      </select>
-                  </div>
-                  
-                  <div id="packages-container">
-                      <div class="loading">Loading packages...</div>
-                  </div>
-              </div>
-          </div>
-          
-          <script>
-              let allPackages = [];
-              let filteredPackages = [];
-              
-              function showTab(tabName) {
-                  document.querySelectorAll('.nav-tab').forEach(tab => tab.classList.remove('active'));
-                  document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
-                  
-                  event.target.classList.add('active');
-                  document.getElementById(tabName + '-tab').classList.add('active');
-                  
-                  if (tabName === 'packages' && allPackages.length === 0) {
-                      loadPackages();
-                  }
-              }
-              
-              async function loadPackages() {
-                  try {
-                      const response = await fetch('./api/packages.json');
-                      allPackages = await response.json();
-                      filteredPackages = [...allPackages];
-                      updateStats();
-                      renderPackages();
-                      setupEventListeners();
-                  } catch (error) {
-                      document.getElementById('packages-container').innerHTML = 
-                          '<div class="no-results">Error loading packages. Please try again later.</div>';
-                  }
-              }
-              
-              function updateStats() {
-                  document.getElementById('total-packages').textContent = allPackages.length;
-                  document.getElementById('filtered-packages').textContent = filteredPackages.length;
-              }
-              
-              function renderPackages() {
-                  const container = document.getElementById('packages-container');
-                  
-                  if (filteredPackages.length === 0) {
-                      container.innerHTML = '<div class="no-results">No packages found matching your criteria.</div>';
-                      return;
-                  }
-                  
-                  const html = filteredPackages.map(pkg => `
-                      <div class="package-card">
-                          <div class="package-name">${pkg.name}</div>
-                          <div class="package-version">Version: ${pkg.version}</div>
-                          <div class="package-desc">${pkg.description}</div>
-                          <div class="package-meta">
-                              <span><strong>Architecture:</strong> ${pkg.architecture}</span>
-                              <span><strong>Size:</strong> ${pkg.size}</span>
-                              <span><strong>Modified:</strong> ${pkg.modified}</span>
-                          </div>
-                          <a href="./x86_64/${pkg.filename}" class="download-btn" download>Download Package</a>
-                      </div>
-                  `).join('');
-                  
-                  container.innerHTML = `<div class="package-grid">${html}</div>`;
-              }
-              
-              function filterPackages() {
-                  const searchTerm = document.getElementById('search-input').value.toLowerCase();
-                  const archFilter = document.getElementById('arch-filter').value;
-                  const sortBy = document.getElementById('sort-filter').value;
-                  
-                  filteredPackages = allPackages.filter(pkg => {
-                      const matchesSearch = pkg.name.toLowerCase().includes(searchTerm) || 
-                                          pkg.description.toLowerCase().includes(searchTerm);
-                      const matchesArch = !archFilter || pkg.architecture === archFilter;
-                      return matchesSearch && matchesArch;
-                  });
-                  
-                  filteredPackages.sort((a, b) => {
-                      switch (sortBy) {
-                          case 'name':
-                              return a.name.localeCompare(b.name);
-                          case 'date':
-                              return new Date(b.modified) - new Date(a.modified);
-                          case 'size':
-                              const sizeA = parseFloat(a.size.replace(/[^\d.]/g, ''));
-                              const sizeB = parseFloat(b.size.replace(/[^\d.]/g, ''));
-                              return sizeB - sizeA;
-                          default:
-                              return 0;
-                      }
-                  });
-                  
-                  updateStats();
-                  renderPackages();
-              }
-              
-              function setupEventListeners() {
-                  document.getElementById('search-input').addEventListener('input', filterPackages);
-                  document.getElementById('arch-filter').addEventListener('change', filterPackages);
-                  document.getElementById('sort-filter').addEventListener('change', filterPackages);
-              }
-          </script>
-      </body>
-      </html>
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>CrystalLinux Repository</title>
+            <style>
+                * { box-sizing: border-box; }
+                body { 
+                    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+                    margin: 0; 
+                    padding: 20px; 
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    color: #333;
+                    min-height: 100vh;
+                }
+                .container { 
+                    max-width: 1200px; 
+                    margin: 0 auto; 
+                    background: white;
+                    border-radius: 10px;
+                    box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+                    overflow: hidden;
+                }
+                .header {
+                    background: linear-gradient(45deg, #2c3e50, #3498db);
+                    color: white;
+                    padding: 30px;
+                    text-align: center;
+                }
+                .header h1 { margin: 0; font-size: 2.5em; }
+                .header p { margin: 10px 0 0 0; opacity: 0.9; }
+                
+                .nav-tabs {
+                    display: flex;
+                    background: #f8f9fa;
+                    border-bottom: 1px solid #ddd;
+                }
+                .nav-tab {
+                    padding: 15px 25px;
+                    cursor: pointer;
+                    border: none;
+                    background: none;
+                    font-size: 16px;
+                    transition: all 0.3s;
+                }
+                .nav-tab.active {
+                    background: white;
+                    border-bottom: 3px solid #3498db;
+                    color: #3498db;
+                }
+                .nav-tab:hover:not(.active) {
+                    background: #e9ecef;
+                }
+                
+                .tab-content {
+                    display: none;
+                    padding: 30px;
+                }
+                .tab-content.active {
+                    display: block;
+                }
+                
+                .setup-section {
+                    background: #f8f9fa;
+                    padding: 20px;
+                    border-radius: 8px;
+                    margin: 20px 0;
+                }
+                .code { 
+                    background: #2c3e50; 
+                    color: #ecf0f1;
+                    padding: 15px; 
+                    border-radius: 5px; 
+                    font-family: 'Courier New', monospace;
+                    overflow-x: auto;
+                    margin: 10px 0;
+                }
+                
+                .search-container {
+                    margin-bottom: 20px;
+                }
+                .search-input {
+                    width: 100%;
+                    padding: 12px;
+                    font-size: 16px;
+                    border: 2px solid #ddd;
+                    border-radius: 6px;
+                    transition: border-color 0.3s;
+                }
+                .search-input:focus {
+                    outline: none;
+                    border-color: #3498db;
+                }
+                
+                .filters {
+                    display: flex;
+                    gap: 15px;
+                    margin-bottom: 20px;
+                    flex-wrap: wrap;
+                }
+                .filter-select {
+                    padding: 8px 12px;
+                    border: 1px solid #ddd;
+                    border-radius: 4px;
+                    background: white;
+                }
+                
+                .package-grid {
+                    display: grid;
+                    gap: 20px;
+                    grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+                }
+                .package-card {
+                    border: 1px solid #ddd;
+                    border-radius: 8px;
+                    padding: 20px;
+                    transition: all 0.3s;
+                    background: white;
+                }
+                .package-card:hover {
+                    box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+                    transform: translateY(-2px);
+                }
+                .package-name {
+                    font-size: 1.3em;
+                    font-weight: bold;
+                    color: #2c3e50;
+                    margin-bottom: 8px;
+                }
+                .package-version {
+                    color: #3498db;
+                    font-weight: 500;
+                    margin-bottom: 10px;
+                }
+                .package-desc {
+                    color: #666;
+                    margin-bottom: 15px;
+                    line-height: 1.4;
+                }
+                .package-meta {
+                    font-size: 0.9em;
+                    color: #888;
+                }
+                .package-meta span {
+                    display: inline-block;
+                    margin-right: 15px;
+                    margin-bottom: 5px;
+                }
+                .download-btn {
+                    background: #27ae60;
+                    color: white;
+                    padding: 8px 16px;
+                    border: none;
+                    border-radius: 4px;
+                    cursor: pointer;
+                    text-decoration: none;
+                    display: inline-block;
+                    margin-top: 10px;
+                    transition: background 0.3s;
+                }
+                .download-btn:hover {
+                    background: #219a52;
+                }
+                
+                .loading {
+                    text-align: center;
+                    padding: 40px;
+                    color: #666;
+                }
+                .no-results {
+                    text-align: center;
+                    padding: 40px;
+                    color: #666;
+                    font-style: italic;
+                }
+                
+                .stats {
+                    display: flex;
+                    justify-content: space-around;
+                    background: #f8f9fa;
+                    padding: 20px;
+                    border-radius: 8px;
+                    margin-bottom: 20px;
+                }
+                .stat-item {
+                    text-align: center;
+                }
+                .stat-number {
+                    font-size: 2em;
+                    font-weight: bold;
+                    color: #3498db;
+                }
+                .stat-label {
+                    color: #666;
+                    margin-top: 5px;
+                }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h1>CrystalLinux Repository</h1>
+                    <p>Arch Linux compatible package repository for CrystalLinux distribution</p>
+                </div>
+                
+                <div class="nav-tabs">
+                    <button class="nav-tab active" onclick="showTab('setup')">Setup</button>
+                    <button class="nav-tab" onclick="showTab('packages')">Browse Packages</button>
+                </div>
+                
+                <div id="setup-tab" class="tab-content active">
+                    <h2>Repository Setup</h2>
+                    <div class="setup-section">
+                        <h3>Quick Setup</h3>
+                        <p>Add the following to your <code>/etc/pacman.conf</code>:</p>
+                        <div class="code">[crystallinux]<br>Server = https://crystalnetwork-studio.gitlab.io/linux/CrystalLinux/repository/pkgbuilds/gitlab-profile/$arch<br>SigLevel = Optional TrustAll</div>
+                        
+                        <p>Then run:</p>
+                        <div class="code">sudo pacman -Sy</div>
+                        
+                        <h3>Install Packages</h3>
+                        <p>Install packages from the repository:</p>
+                        <div class="code">sudo pacman -S package-name</div>
+                        
+                        <h3>Search Repository</h3>
+                        <p>Search for available packages:</p>
+                        <div class="code">pacman -Ss crystallinux/</div>
+                    </div>
+                </div>
+                
+                <div id="packages-tab" class="tab-content">
+                    <div class="stats" id="stats-container">
+                        <div class="stat-item">
+                            <div class="stat-number" id="total-packages">0</div>
+                            <div class="stat-label">Total Packages</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-number" id="filtered-packages">0</div>
+                            <div class="stat-label">Shown</div>
+                        </div>
+                    </div>
+                    
+                    <div class="search-container">
+                        <input type="text" class="search-input" id="search-input" placeholder="Search packages by name or description...">
+                    </div>
+                    
+                    <div class="filters">
+                        <select class="filter-select" id="arch-filter">
+                            <option value="">All Architectures</option>
+                            <option value="x86_64">x86_64</option>
+                            <option value="any">any</option>
+                        </select>
+                        <select class="filter-select" id="sort-filter">
+                            <option value="name">Sort by Name</option>
+                            <option value="date">Sort by Date</option>
+                            <option value="size">Sort by Size</option>
+                        </select>
+                    </div>
+                    
+                    <div id="packages-container">
+                        <div class="loading">Loading packages...</div>
+                    </div>
+                </div>
+            </div>
+            
+            <script>
+                let allPackages = [];
+                let filteredPackages = [];
+                
+                function showTab(tabName) {
+                    document.querySelectorAll('.nav-tab').forEach(tab => tab.classList.remove('active'));
+                    document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+                    
+                    event.target.classList.add('active');
+                    document.getElementById(tabName + '-tab').classList.add('active');
+                    
+                    if (tabName === 'packages' && allPackages.length === 0) {
+                        loadPackages();
+                    }
+                }
+                
+                async function loadPackages() {
+                    try {
+                        const response = await fetch('./api/packages.json');
+                        allPackages = await response.json();
+                        filteredPackages = [...allPackages];
+                        updateStats();
+                        renderPackages();
+                        setupEventListeners();
+                    } catch (error) {
+                        document.getElementById('packages-container').innerHTML = 
+                            '<div class="no-results">Error loading packages. Please try again later.</div>';
+                    }
+                }
+                
+                function updateStats() {
+                    document.getElementById('total-packages').textContent = allPackages.length;
+                    document.getElementById('filtered-packages').textContent = filteredPackages.length;
+                }
+                
+                function renderPackages() {
+                    const container = document.getElementById('packages-container');
+                    
+                    if (filteredPackages.length === 0) {
+                        container.innerHTML = '<div class="no-results">No packages found matching your criteria.</div>';
+                        return;
+                    }
+                    
+                    const html = filteredPackages.map(pkg => `
+                        <div class="package-card">
+                            <div class="package-name">${pkg.name}</div>
+                            <div class="package-version">Version: ${pkg.version}</div>
+                            <div class="package-desc">${pkg.description}</div>
+                            <div class="package-meta">
+                                <span><strong>Architecture:</strong> ${pkg.architecture}</span>
+                                <span><strong>Size:</strong> ${pkg.size}</span>
+                                <span><strong>Modified:</strong> ${pkg.modified}</span>
+                            </div>
+                            <a href="./x86_64/${pkg.filename}" class="download-btn" download>Download Package</a>
+                        </div>
+                    `).join('');
+                    
+                    container.innerHTML = `<div class="package-grid">${html}</div>`;
+                }
+                
+                function filterPackages() {
+                    const searchTerm = document.getElementById('search-input').value.toLowerCase();
+                    const archFilter = document.getElementById('arch-filter').value;
+                    const sortBy = document.getElementById('sort-filter').value;
+                    
+                    filteredPackages = allPackages.filter(pkg => {
+                        const matchesSearch = pkg.name.toLowerCase().includes(searchTerm) || 
+                                            pkg.description.toLowerCase().includes(searchTerm);
+                        const matchesArch = !archFilter || pkg.architecture === archFilter;
+                        return matchesSearch && matchesArch;
+                    });
+                    
+                    filteredPackages.sort((a, b) => {
+                        switch (sortBy) {
+                            case 'name':
+                                return a.name.localeCompare(b.name);
+                            case 'date':
+                                return new Date(b.modified) - new Date(a.modified);
+                            case 'size':
+                                const sizeA = parseFloat(a.size.replace(/[^\d.]/g, ''));
+                                const sizeB = parseFloat(b.size.replace(/[^\d.]/g, ''));
+                                return sizeB - sizeA;
+                            default:
+                                return 0;
+                        }
+                    });
+                    
+                    updateStats();
+                    renderPackages();
+                }
+                
+                function setupEventListeners() {
+                    document.getElementById('search-input').addEventListener('input', filterPackages);
+                    document.getElementById('arch-filter').addEventListener('change', filterPackages);
+                    document.getElementById('sort-filter').addEventListener('change', filterPackages);
+                }
+            </script>
+        </body>
+        </html>
         EOF
 
       cat > "${REPO_DIR}/api/search.html" << 'EOF'
-      <!DOCTYPE html>
-      <html>
-      <head>
-          <title>Package Search API</title>
-      </head>
-      <body>
-          <script>
-              const urlParams = new URLSearchParams(window.location.search);
-              const query = urlParams.get('q');
-              const format = urlParams.get('format') || 'json';
-              
-              if (query) {
-                  fetch('../api/packages.json')
-                      .then(response => response.json())
-                      .then(packages => {
-                          const results = packages.filter(pkg => 
-                              pkg.name.toLowerCase().includes(query.toLowerCase()) ||
-                              pkg.description.toLowerCase().includes(query.toLowerCase())
-                          );
-                          
-                          if (format === 'json') {
-                              document.body.innerHTML = '<pre>' + JSON.stringify(results, null, 2) + '</pre>';
-                          }
-                      });
-              } else {
-                  document.body.innerHTML = '<h1>Package Search API</h1><p>Usage: ?q=search_term&format=json</p>';
-              }
-          </script>
-      </body>
-      </html>
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Package Search API</title>
+        </head>
+        <body>
+            <script>
+                const urlParams = new URLSearchParams(window.location.search);
+                const query = urlParams.get('q');
+                const format = urlParams.get('format') || 'json';
+                
+                if (query) {
+                    fetch('../api/packages.json')
+                        .then(response => response.json())
+                        .then(packages => {
+                            const results = packages.filter(pkg => 
+                                pkg.name.toLowerCase().includes(query.toLowerCase()) ||
+                                pkg.description.toLowerCase().includes(query.toLowerCase())
+                            );
+                            
+                            if (format === 'json') {
+                                document.body.innerHTML = '<pre>' + JSON.stringify(results, null, 2) + '</pre>';
+                            }
+                        });
+                } else {
+                    document.body.innerHTML = '<h1>Package Search API</h1><p>Usage: ?q=search_term&format=json</p>';
+                }
+            </script>
+        </body>
+        </html>
         EOF
       
-      # --- Step 7: FINAL STEP ---
       echo "-----------------------------------------"
       echo "Final check before artifact upload:"
       ls -laR public
