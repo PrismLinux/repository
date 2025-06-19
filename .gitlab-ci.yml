@@ -15,23 +15,19 @@ pages:
     - mkdir -p public/x86_64
     - echo "Created directory structure at public/x86_64"
 
-    # Initialize arrays to store package info
-    - declare -a PACKAGE_NAMES
-    - declare -a PACKAGE_URLS
-    - declare -a PACKAGE_SIZES
+    # Initialize package info file
+    - echo "" > /tmp/packages_info.txt
 
     # --- Get Package Info from Releases ---
     - |
       for project_id in $PACKAGE_PROJECT_IDS; do
         echo "Processing project ID: $project_id"
         
-        # Get project info to extract repository name
         PROJECT_API_URL="https://gitlab.com/api/v4/projects/${project_id}"
         PROJECT_INFO=$(curl --silent --show-error --header "PRIVATE-TOKEN: $GITLAB_TOKEN" "$PROJECT_API_URL")
         PROJECT_NAME=$(echo "$PROJECT_INFO" | jq -r '.path')
         echo "Project name: $PROJECT_NAME"
         
-        # Get latest release info
         RELEASE_API_URL="https://gitlab.com/api/v4/projects/${project_id}/releases/latest"
         API_RESPONSE=$(curl --silent --show-error --header "PRIVATE-TOKEN: $GITLAB_TOKEN" "$RELEASE_API_URL")
 
@@ -40,7 +36,6 @@ pages:
           continue
         fi
 
-        # Extract package info from release assets
         ASSET_INFO=$(echo "$API_RESPONSE" | jq -r '(.assets.links // [])[] | select(.name | endswith(".pkg.tar.zst")) | "\(.name)|\(.url)"' | head -n 1)
 
         if [ -z "$ASSET_INFO" ]; then
@@ -50,67 +45,44 @@ pages:
 
         PACKAGE_NAME=$(echo "$ASSET_INFO" | cut -d'|' -f1)
         PACKAGE_URL=$(echo "$ASSET_INFO" | cut -d'|' -f2)
-        
-        # Get file size (try to get from headers)
         PACKAGE_SIZE=$(curl --silent --head "$PACKAGE_URL" | grep -i content-length | awk '{print $2}' | tr -d '\r' || echo "Unknown")
         
         echo "Found package: $PACKAGE_NAME"
         echo "Direct URL: $PACKAGE_URL"
         echo "Size: $PACKAGE_SIZE bytes"
         
-        # Store package info
-        PACKAGE_NAMES+=("$PACKAGE_NAME")
-        PACKAGE_URLS+=("$PACKAGE_URL")
-        PACKAGE_SIZES+=("$PACKAGE_SIZE")
+        echo "${PACKAGE_NAME}|${PACKAGE_URL}|${PACKAGE_SIZE}" >> /tmp/packages_info.txt
       done
 
     # --- Create Repository Database with Direct Links ---
     - cd public/x86_64
-
-    # Create symbolic repository database structure
     - |
-      if [ ${#PACKAGE_NAMES[@]} -eq 0 ]; then
+      if [ ! -s /tmp/packages_info.txt ]; then
         echo "No packages found to add to the repository."
-        # Create empty database files
         touch "${REPO_NAME}.db"
         touch "${REPO_NAME}.files"
       else
         echo "Creating repository database with direct links..."
+        echo "# This is a redirect-based repository" > "${REPO_NAME}.db"
+        echo "# Packages are served directly from GitLab artifacts" >> "${REPO_NAME}.db"
+        echo "# This is a redirect-based repository" > "${REPO_NAME}.files"
+        echo "# Files are served directly from GitLab artifacts" >> "${REPO_NAME}.files"
         
-        # Create a temporary directory for package database creation
-        mkdir -p /tmp/repo_temp
-        
-        # For each package, we need to create a database entry
-        # Since we can't download files, we'll create a minimal database
-        # and redirect actual downloads to direct URLs
-        
-        # Create a simple database structure
-        cat > "${REPO_NAME}.db" << 'EOF'
-        EOF
-        
-        cat > "${REPO_NAME}.files" << 'EOF'
-        EOF
-        
-        # Create redirect configuration for each package
-        for i in "${!PACKAGE_NAMES[@]}"; do
-          PACKAGE_NAME="${PACKAGE_NAMES[$i]}"
-          PACKAGE_URL="${PACKAGE_URLS[$i]}"
-          
-          # Create a redirect file for each package
-          cat > "${PACKAGE_NAME}.redirect" << EOF
-          REDIRECT_URL=${PACKAGE_URL}
-          EOF
-        done
+        while IFS='|' read -r PACKAGE_NAME PACKAGE_URL PACKAGE_SIZE; do
+          if [ -n "$PACKAGE_NAME" ]; then
+            echo "REDIRECT_URL=${PACKAGE_URL}" > "${PACKAGE_NAME}.redirect"
+          fi
+        done < /tmp/packages_info.txt
       fi
     - cd ../..
 
     # --- Generate HTML Index with Direct Links ---
     - echo "Generating index.html files with direct links..."
     - |
-      cat <<EOF > public/index.html
+      cat > public/index.html << 'EOF'
       <!DOCTYPE html>
       <html><head>
-        <title>${REPO_NAME^} Packages Repository</title>
+        <title>CrystalLinux Packages Repository</title>
         <style>
           body { font-family: Arial, sans-serif; margin: 40px; }
           .package { margin: 10px 0; padding: 10px; border: 1px solid #ddd; }
@@ -118,40 +90,35 @@ pages:
           .size { color: #666; font-size: 0.9em; }
         </style>
       </head><body>
-      <h1>${REPO_NAME^} Packages Repository</h1>
+      <h1>CrystalLinux Packages Repository</h1>
       <p>This repository uses direct links to GitLab artifacts.</p>
       <h2>Architecture: x86_64</h2>
       EOF
     
     - |
-      if [ ${#PACKAGE_NAMES[@]} -gt 0 ]; then
-        for i in "${!PACKAGE_NAMES[@]}"; do
-          PACKAGE_NAME="${PACKAGE_NAMES[$i]}"
-          PACKAGE_URL="${PACKAGE_URLS[$i]}"
-          PACKAGE_SIZE="${PACKAGE_SIZES[$i]}"
-          
-          # Convert size to human readable format
-          if [ "$PACKAGE_SIZE" != "Unknown" ] && [ "$PACKAGE_SIZE" -gt 0 ] 2>/dev/null; then
-            if [ "$PACKAGE_SIZE" -gt 1048576 ]; then
+      if [ -s /tmp/packages_info.txt ]; then
+        while IFS='|' read -r PACKAGE_NAME PACKAGE_URL PACKAGE_SIZE; do
+          if [ -n "$PACKAGE_NAME" ]; then
+            if [ "$PACKAGE_SIZE" != "Unknown" ] && [ "$PACKAGE_SIZE" -gt 1048576 ] 2>/dev/null; then
               SIZE_DISPLAY="$(( PACKAGE_SIZE / 1048576 )) MB"
-            elif [ "$PACKAGE_SIZE" -gt 1024 ]; then
+            elif [ "$PACKAGE_SIZE" != "Unknown" ] && [ "$PACKAGE_SIZE" -gt 1024 ] 2>/dev/null; then
               SIZE_DISPLAY="$(( PACKAGE_SIZE / 1024 )) KB"
-            else
+            elif [ "$PACKAGE_SIZE" != "Unknown" ]; then
               SIZE_DISPLAY="${PACKAGE_SIZE} bytes"
+            else
+              SIZE_DISPLAY="Unknown size"
             fi
-          else
-            SIZE_DISPLAY="Unknown size"
-          fi
-          
-          cat >> public/index.html << EOF
-      <div class="package">
-        <h3>${PACKAGE_NAME}</h3>
-        <p class="size">Size: ${SIZE_DISPLAY}</p>
-        <a href="${PACKAGE_URL}" class="download-btn" download="${PACKAGE_NAME}">Download Package</a>
-        <a href="${PACKAGE_URL}" target="_blank" style="margin-left: 10px;">Direct Link</a>
-      </div>
+            
+            cat >> public/index.html << EOF
+        <div class="package">
+          <h3>${PACKAGE_NAME}</h3>
+          <p class="size">Size: ${SIZE_DISPLAY}</p>
+          <a href="${PACKAGE_URL}" class="download-btn" download="${PACKAGE_NAME}">Download Package</a>
+          <a href="${PACKAGE_URL}" target="_blank" style="margin-left: 10px;">Direct Link</a>
+        </div>
       EOF
-        done
+          fi
+        done < /tmp/packages_info.txt
       else
         echo "      <p>No packages available yet.</p>" >> public/index.html
       fi
