@@ -230,8 +230,8 @@ pages:
       SigLevel = Optional TrustAll
       EOF
             
-            # Create installation instructions
-            cat > "${REPO_DIR}/README.md" << 'EOF'
+      # Create installation instructions
+      cat > "${REPO_DIR}/README.md" << 'EOF'
       # CrystalLinux Repository
 
       ## Installation
@@ -273,11 +273,11 @@ pages:
       If you continue to have issues, you can configure pacman to use the .tar.gz files directly by creating a custom configuration:
 
       ```bash
-      sudo tee /etc/pacman.d/crystallinux.conf << 'EOF'
+      sudo tee /etc/pacman.d/crystallinux.conf << 'EOFCONFIG'
       [crystallinux]
       Server = https://crystalnetwork-studio.gitlab.io/linux/CrystalLinux/repository/pkgbuilds/gitlab-profile/$repo/$arch
       SigLevel = Optional TrustAll
-      EOF
+      EOFCONFIG
       ```
 
       Then include it in your main `/etc/pacman.conf`:
