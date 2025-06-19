@@ -18,7 +18,7 @@ pages:
     # Initialize package info file
     - echo "" > /tmp/packages_info.txt
 
-    # --- Get Package Info from Releases ---
+    # --- Get Package Info from Job Artifacts ---
     - |
       for project_id in $PACKAGE_PROJECT_IDS; do
         echo "Processing project ID: $project_id"
@@ -28,30 +28,91 @@ pages:
         PROJECT_NAME=$(echo "$PROJECT_INFO" | jq -r '.path')
         echo "Project name: $PROJECT_NAME"
         
-        RELEASE_API_URL="https://gitlab.com/api/v4/projects/${project_id}/releases/latest"
-        API_RESPONSE=$(curl --silent --show-error --header "PRIVATE-TOKEN: $GITLAB_TOKEN" "$RELEASE_API_URL")
-
-        if [ -z "$API_RESPONSE" ]; then
-          echo "WARNING: No releases found for project $project_id. Skipping."
+        # Get the latest successful pipeline
+        PIPELINES_API_URL="https://gitlab.com/api/v4/projects/${project_id}/pipelines?status=success&per_page=1"
+        PIPELINE_RESPONSE=$(curl --silent --show-error --header "PRIVATE-TOKEN: $GITLAB_TOKEN" "$PIPELINES_API_URL")
+        
+        if [ -z "$PIPELINE_RESPONSE" ] || [ "$PIPELINE_RESPONSE" = "[]" ]; then
+          echo "WARNING: No successful pipelines found for project $project_id. Skipping."
           continue
         fi
-
-        ASSET_INFO=$(echo "$API_RESPONSE" | jq -r '(.assets.links // [])[] | select(.name | endswith(".pkg.tar.zst")) | "\(.name)|\(.url)"' | head -n 1)
-
-        if [ -z "$ASSET_INFO" ]; then
-          echo "WARNING: No '*.pkg.tar.zst' asset found in the latest release of project $project_id. Skipping."
+        
+        PIPELINE_ID=$(echo "$PIPELINE_RESPONSE" | jq -r '.[0].id')
+        echo "Latest successful pipeline ID: $PIPELINE_ID"
+        
+        # Get jobs from the pipeline
+        JOBS_API_URL="https://gitlab.com/api/v4/projects/${project_id}/pipelines/${PIPELINE_ID}/jobs"
+        JOBS_RESPONSE=$(curl --silent --show-error --header "PRIVATE-TOKEN: $GITLAB_TOKEN" "$JOBS_API_URL")
+        
+        # Find jobs with artifacts
+        JOB_WITH_ARTIFACTS=$(echo "$JOBS_RESPONSE" | jq -r '.[] | select(.artifacts_file != null) | .id' | head -n 1)
+        
+        if [ -z "$JOB_WITH_ARTIFACTS" ]; then
+          echo "WARNING: No jobs with artifacts found for project $project_id. Skipping."
           continue
         fi
-
-        PACKAGE_NAME=$(echo "$ASSET_INFO" | cut -d'|' -f1)
-        PACKAGE_URL=$(echo "$ASSET_INFO" | cut -d'|' -f2)
-        PACKAGE_SIZE=$(curl --silent --head "$PACKAGE_URL" | grep -i content-length | awk '{print $2}' | tr -d '\r' || echo "Unknown")
         
-        echo "Found package: $PACKAGE_NAME"
-        echo "Direct URL: $PACKAGE_URL"
-        echo "Size: $PACKAGE_SIZE bytes"
+        echo "Job with artifacts: $JOB_WITH_ARTIFACTS"
         
-        echo "${PACKAGE_NAME}|${PACKAGE_URL}|${PACKAGE_SIZE}" >> /tmp/packages_info.txt
+        # Get artifacts from the job
+        ARTIFACTS_API_URL="https://gitlab.com/api/v4/projects/${project_id}/jobs/${JOB_WITH_ARTIFACTS}/artifacts"
+        
+        # Try to find .pkg.tar.zst files in the artifacts
+        # First, let's try to get the artifact file listing (this might not work with all GitLab versions)
+        # Alternative: construct the direct URL based on known patterns
+        
+        # Method 1: Try to get artifact file listing (may require different API approach)
+        # For now, we'll use a pattern-based approach since your artifacts seem to follow a pattern
+        
+        # Get project details to construct artifact URL
+        ARTIFACT_BASE_URL="https://gitlab.com/api/v4/projects/${project_id}/jobs/${JOB_WITH_ARTIFACTS}/artifacts/raw"
+        
+        # Try common package file patterns
+        # Since we know your file is named like: xmcl-launcher-0.51.1-1-x86_64.pkg.tar.zst
+        # We can try to find it by downloading the artifacts and checking
+        
+        # Download artifacts to temp directory
+        TEMP_DIR=$(mktemp -d)
+        ARTIFACTS_ZIP="$TEMP_DIR/artifacts.zip"
+        
+        curl --silent --show-error --header "PRIVATE-TOKEN: $GITLAB_TOKEN" \
+             --output "$ARTIFACTS_ZIP" \
+             "https://gitlab.com/api/v4/projects/${project_id}/jobs/${JOB_WITH_ARTIFACTS}/artifacts"
+        
+        if [ -f "$ARTIFACTS_ZIP" ]; then
+          cd "$TEMP_DIR"
+          unzip -q "$ARTIFACTS_ZIP" 2>/dev/null || echo "Note: Could not extract artifacts (might not be a zip)"
+          
+          # Find .pkg.tar.zst files
+          PKG_FILES=$(find . -name "*.pkg.tar.zst" 2>/dev/null)
+          
+          for pkg_file in $PKG_FILES; do
+            # Remove leading ./ from path
+            clean_path=$(echo "$pkg_file" | sed 's|^\./||')
+            PACKAGE_NAME=$(basename "$clean_path")
+            
+            # Construct the direct artifact URL
+            PACKAGE_URL="${ARTIFACT_BASE_URL}/${clean_path}"
+            
+            # Get package size (try to get from local file first, then from URL)
+            if [ -f "$pkg_file" ]; then
+              PACKAGE_SIZE=$(stat -c%s "$pkg_file" 2>/dev/null || wc -c < "$pkg_file" 2>/dev/null || echo "Unknown")
+            else
+              PACKAGE_SIZE=$(curl --silent --head "$PACKAGE_URL" | grep -i content-length | awk '{print $2}' | tr -d '\r' || echo "Unknown")
+            fi
+            
+            echo "Found package: $PACKAGE_NAME"
+            echo "Artifact URL: $PACKAGE_URL"
+            echo "Size: $PACKAGE_SIZE bytes"
+            
+            echo "${PACKAGE_NAME}|${PACKAGE_URL}|${PACKAGE_SIZE}" >> /tmp/packages_info.txt
+          done
+          
+          cd - >/dev/null
+        fi
+        
+        # Clean up temp directory
+        rm -rf "$TEMP_DIR"
       done
 
     # --- Create Repository Database with Direct Links ---
@@ -135,6 +196,7 @@ pages:
       
       <h3>Repository Configuration</h3>
       <p>For traditional package managers, you may need to configure custom mirror URLs pointing to the individual package links.</p>
+      <p><strong>Note:</strong> Packages are served from GitLab job artifacts and require authentication tokens for access.</p>
       
       </body></html>
       EOF
@@ -151,7 +213,7 @@ pages:
       </body></html>
       EOF
 
-    - echo "Repository setup complete with direct links."
+    - echo "Repository setup complete with direct links to job artifacts."
 
   artifacts:
     paths:
