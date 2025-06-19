@@ -1,13 +1,12 @@
 #
 # CI/CD Pipeline for an CrystalLinux Aggregator Repository
-# This pipeline fetches pre-built packages from other GitLab projects
-# and publishes them as a unified pacman repository on GitLab Pages.
+# This pipeline fetches, syncs, and publishes a unified pacman repository.
 #
 image: archlinux:latest
 
 variables:
   REPO_NAME: "crystallinux"
-  REPO_DIR: "public"
+  REPO_DIR: "public" 
   PACKAGE_PROJECT_IDS: "70724583"
 
 workflow:
@@ -16,22 +15,15 @@ workflow:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE == 'push'
 
 # --- Cache ---
-# Caches the repository contents to avoid re-downloading packages that haven't changed.
 cache:
   key: "repo-cache-${CI_COMMIT_REF_SLUG}"
   paths:
     - "${REPO_DIR}/"
   policy: pull-push
 
-# --- Main Stages ---
-stages:
-  - update # Stage to sync packages and update the database
-  - deploy # Stage to deploy to GitLab Pages
-
-# --- Stage 1: Update Repository ---
-# Fetches remote packages, removes orphans, and rebuilds the database if needed.
-update_repository:
-  stage: update
+# --- The combined build and deploy job ---
+pages:
+  stage: deploy
   
   before_script:
     - pacman -Syu --noconfirm
@@ -42,6 +34,8 @@ update_repository:
     - REPO_ARCH_DIR="${REPO_DIR}/x86_64"
     - mkdir -p "${REPO_ARCH_DIR}"
     - echo "Repository directory is ${REPO_ARCH_DIR}"
+    - echo "Initial contents from cache:"
+    - ls -R "${REPO_DIR}"
     
     # --- Step 1: Get a list of ALL expected remote packages ---
     - declare -A remote_packages_map # Use an associative array for efficient lookups
@@ -58,7 +52,7 @@ update_repository:
           continue
         fi
         
-        JOBS_API_URL="https://gitlab.com/api/v4/projects/${project_id}/jobs?pipeline_id=${PIPELINE_ID}&scope[]=success"
+        JOBS_API_URL="https://gitlab.com/api/v4/projects/${project_id}/pipelines/${PIPELINE_ID}/jobs?scope[]=success"
         JOB_WITH_ARTIFACTS=$(curl --silent --show-error --header "PRIVATE-TOKEN: $GITLAB_TOKEN" "$JOBS_API_URL" | jq -r '[.[] | select(.artifacts_file != null)][0].id')
         
         if [ "$JOB_WITH_ARTIFACTS" = "null" ]; then
@@ -66,7 +60,7 @@ update_repository:
           continue
         fi
         
-        # Get the list of all .pkg.tar.zst files in the artifacts
+        # This API endpoint lists files inside the artifact zip without downloading it
         ARTIFACTS_BROWSE_URL="https://gitlab.com/api/v4/projects/${project_id}/jobs/${JOB_WITH_ARTIFACTS}/artifacts"
         mapfile -t pkg_files < <(curl --silent --show-error --header "PRIVATE-TOKEN: $GITLAB_TOKEN" "$ARTIFACTS_BROWSE_URL" | jq -r '.[] | select(.filename | endswith(".pkg.tar.zst")) | .filename')
         
@@ -113,54 +107,36 @@ update_repository:
     # --- Step 3: Update repository database ---
     - cd "${REPO_ARCH_DIR}"
     - |
+      # We check for *.pkg.tar.zst files in case the repo is empty after sync.
+      if ! ls ./*.pkg.tar.zst 1> /dev/null 2>&1; then
+        echo "Repository is empty. Clearing database files."
+        rm -f ${REPO_NAME}.*
+        REPO_UPDATED=false # Don't try to build a db from nothing
+      fi
+
       if [ "$REPO_UPDATED" = true ]; then
         echo "Repository was updated. Rebuilding database..."
-        # Remove old database files to ensure a clean state
-        rm -f ${REPO_NAME}.*
+        rm -f ${REPO_NAME}.* # Clean old db files
         repo-add "${REPO_NAME}.db.tar.gz" *.pkg.tar.zst
       else
-        echo "No changes detected. Skipping database rebuild."
+        echo "No changes detected. Using database from cache."
       fi
       
       # --- Step 4: CRITICAL FIX FOR GITLAB PAGES (403 ERROR) ---
-      # This must run every time to ensure the artifacts for Pages are correct,
-      # regardless of whether the database was rebuilt or restored from cache.
+      # This runs every time to guarantee the final artifact is correct.
       echo "Ensuring database files are compatible with static hosting..."
       if [ -f "${REPO_NAME}.db.tar.gz" ]; then
-        # Remove symlinks and replace them with hard copies
         rm -f "${REPO_NAME}.db" "${REPO_NAME}.files"
         cp "${REPO_NAME}.db.tar.gz" "${REPO_NAME}.db"
         cp "${REPO_NAME}.files.tar.gz" "${REPO_NAME}.files"
-        echo "Database files are correctly formatted for deployment."
+        echo "Database files are correctly formatted."
       else
-        echo "No packages in repository. Creating empty database files."
+        echo "No packages in repository. Creating empty database files for consistency."
         touch "${REPO_NAME}.db" "${REPO_NAME}.files"
       fi
     - cd ../.. # Return to project root
 
   artifacts:
     paths:
-      - "${REPO_DIR}/" # Make the entire public directory available for the deploy stage
-    expire_in: 1 hour
-
-# --- Stage 2: Deploy to GitLab Pages ---
-pages:
-  stage: deploy
-  needs:
-    - job: update_repository
-      artifacts: true
-  script:
-    - set -eo pipefail
-    - echo "Deploying repository to GitLab Pages..."
-    - |
-      if [ ! -d "${REPO_DIR}/x86_64" ] || [ -z "$(ls -A "${REPO_DIR}/x86_64")" ]; then
-        echo "Repository directory is empty or missing. Nothing to deploy."
-      else
-        echo "Contents of the repository to be deployed:"
-        ls -R "${REPO_DIR}"
-        echo "Deployment to GitLab Pages will proceed."
-      fi
-  artifacts:
-    paths:
-      - public # GitLab Pages specifically deploys the 'public' directory
-    expire_in: 1 week
+      # This is the directory that GitLab Pages will deploy.
+      - public
