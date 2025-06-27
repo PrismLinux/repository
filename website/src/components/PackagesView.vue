@@ -21,12 +21,11 @@ const loading = ref(true); // Keep true initially to show loading state
 const error = ref<string | null>(null);
 
 async function loadPackages() {
-  console.log("loadPackages: Starting package load process.");
   loading.value = true;
   error.value = null;
   try {
     const fetchUrl = `./api/packages.json?v=${new Date().getTime()}`;
-    console.log(`loadPackages: Attempting to fetch from ${fetchUrl}`);
+    console.log(`loadPackages: Attempting to fetch`);
     const response = await fetch(fetchUrl);
 
     if (!response.ok) {
@@ -101,7 +100,6 @@ const shownPackagesCount = computed(
 
 // Call loadPackages when the component is mounted
 onMounted(() => {
-  console.log("PackagesView: Component mounted. Calling loadPackages().");
   loadPackages();
 });
 
@@ -195,117 +193,3 @@ defineExpose({
     </div>
   </div>
 </template>
-
-<style scoped>
-/* Scoped styles for PackagesView.vue */
-.stats {
-  display: flex;
-  justify-content: space-around;
-  background: #f8f9fa;
-  padding: 20px;
-  border-radius: 8px;
-  margin-bottom: 20px;
-}
-.stat-item {
-  text-align: center;
-}
-.stat-number {
-  font-size: 2em;
-  font-weight: bold;
-  color: #3498db;
-}
-.stat-label {
-  color: #666;
-  margin-top: 5px;
-}
-.search-container {
-  margin-bottom: 20px;
-}
-.search-input {
-  width: 100%;
-  padding: 12px;
-  font-size: 16px;
-  border: 2px solid #ddd;
-  border-radius: 6px;
-  transition: border-color 0.3s;
-}
-.search-input:focus {
-  outline: none;
-  border-color: #3498db;
-}
-.filters {
-  display: flex;
-  gap: 15px;
-  margin-bottom: 20px;
-  flex-wrap: wrap;
-}
-.filter-select {
-  padding: 8px 12px;
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  background: white;
-}
-.package-grid {
-  display: grid;
-  gap: 20px;
-  grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
-}
-.package-card {
-  border: 1px solid #ddd;
-  border-radius: 8px;
-  padding: 20px;
-  transition: all 0.3s;
-  background: white;
-}
-.package-card:hover {
-  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
-  transform: translateY(-2px);
-}
-.package-name {
-  font-size: 1.3em;
-  font-weight: bold;
-  color: #2c3e50;
-  margin-bottom: 8px;
-}
-.package-version {
-  color: #3498db;
-  font-weight: 500;
-  margin-bottom: 10px;
-}
-.package-desc {
-  color: #666;
-  margin-bottom: 15px;
-  line-height: 1.4;
-}
-.package-meta {
-  font-size: 0.9em;
-  color: #888;
-}
-.package-meta span {
-  display: inline-block;
-  margin-right: 15px;
-  margin-bottom: 5px;
-}
-.download-btn {
-  background: #27ae60;
-  color: white;
-  padding: 8px 16px;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  text-decoration: none;
-  display: inline-block;
-  margin-top: 10px;
-  transition: background 0.3s;
-}
-.download-btn:hover {
-  background: #219a52;
-}
-.loading,
-.no-results {
-  text-align: center;
-  padding: 40px;
-  color: #666;
-  font-style: italic;
-}
-</style>
