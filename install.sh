@@ -100,13 +100,39 @@ install_repo() {
     if grep -qF "${INCLUDE_LINE}" "${PACMAN_CONF}"; then
         print_info "Include line already exists in ${PACMAN_CONF}. No changes needed there."
     else
-        print_info "Adding Include line to ${PACMAN_CONF}..."
-        if sudo sh -c "echo '${INCLUDE_LINE}' >> '${PACMAN_CONF}'"; then
-            print_success "Include line added to ${PACMAN_CONF}."
+        print_info "Adding Include line to ${PACMAN_CONF} at desired position..."
+        # Find the line number of the first standard repository section that is not commented out.
+        # This ensures the new repository is prioritized above core, extra, multilib, and any testing repos.
+        local FIRST_REPO_LINE=$(sudo grep -n -E '^\s*\[(chaotic-aur|core|extra|multilib|testing|community|community-testing|multilib-testing)\]' "${PACMAN_CONF}" | head -n 1 | cut -d: -f1)
+
+        if [[ -n "$FIRST_REPO_LINE" ]]; then
+            # Insert the include line before the first found standard repository section.
+            # Using `sed -i` to edit the file in place.
+            if sudo sed -i "${FIRST_REPO_LINE}i ${INCLUDE_LINE}" "${PACMAN_CONF}"; then
+                print_success "Include line added to ${PACMAN_CONF} before standard repositories."
+            else
+                print_error "Failed to insert Include line at the desired position."
+                print_error "Attempting to append instead as a fallback."
+                # Fallback to appending if insertion fails (e.g., sed error)
+                if sudo sh -c "echo '${INCLUDE_LINE}' >> '${PACMAN_CONF}'"; then
+                    print_success "Include line appended to ${PACMAN_CONF} as a fallback."
+                else
+                    print_error "Failed to append Include line to ${PACMAN_CONF}."
+                    sudo rm -f "${REPO_FILE_PATH}"
+                    exit 1
+                fi
+            fi
         else
-            print_error "Failed to add Include line to ${PACMAN_CONF}."
-            sudo rm -f "${REPO_FILE_PATH}"
-            exit 1
+            print_info "No standard repository sections (e.g., [core], [extra], [multilib]) found in ${PACMAN_CONF}."
+            print_info "Appending Include line to ${PACMAN_CONF} as a fallback..."
+            # If no standard repository sections are found, append it to the end.
+            if sudo sh -c "echo '${INCLUDE_LINE}' >> '${PACMAN_CONF}'"; then
+                print_success "Include line appended to ${PACMAN_CONF}."
+            else
+                print_error "Failed to append Include line to ${PACMAN_CONF}."
+                sudo rm -f "${REPO_FILE_PATH}"
+                exit 1
+            fi
         fi
     fi
 
