@@ -142,7 +142,16 @@ EOF
 
 # Main function
 main() {
-    local file_path="packages_id.txt"
+    # Determine the script's directory
+    script_dir=$(dirname "$0")
+
+    # Construct the default file path relative to the script's location
+    local file_path
+    if [[ "$script_dir" == "." ]]; then
+        file_path="packages_id.txt"
+    else
+        file_path="packages_id.txt"
+    fi
 
     # Parse command line arguments
     while [[ $# -gt 0 ]]; do
