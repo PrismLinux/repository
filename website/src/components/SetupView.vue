@@ -4,7 +4,11 @@
     <div class="setup-section">
       <h3>Quick Setup</h3>
       <p>Add the following to your <code>/etc/pacman.conf</code>:</p>
-      <div class="code">[crystallinux]<br>Server = https://crystalnetwork-studio.gitlab.io/linux/CrystalLinux/tooling/package-repository/$arch<br>SigLevel = Optional TrustAll</div>
+      <div class="code">
+        [crystallinux]<br />Server =
+        https://crystalnetwork-studio.gitlab.io/linux/CrystalLinux/tooling/package-repository/$arch<br />SigLevel
+        = Optional TrustAll
+      </div>
 
       <p>Then run:</p>
       <div class="code">sudo pacman -Sy</div>
@@ -19,12 +23,3 @@
     </div>
   </div>
 </template>
-
-<script setup lang="ts">
-// No script needed for this static component
-</script>
-
-<style scoped>
-/* Scoped styles for SetupView if any specific styling is needed here,
-   otherwise, global styles from style.css are sufficient. */
-</style>
