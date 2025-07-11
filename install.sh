@@ -22,7 +22,7 @@ REPO_NAME="prismlinux"
 SERVER_URL="https://crystalnetwork-studio.gitlab.io/linux/prismlinux/websites/repository/\$arch"
 
 # Configuration file paths
-REPO_FILE_NAME="${REPO_NAME}.conf"
+REPO_FILE_NAME="${REPO_NAME}-mirrorlist.conf"
 REPO_FILE_PATH="/etc/pacman.d/${REPO_FILE_NAME}"
 PACMAN_CONF="/etc/pacman.conf"
 INCLUDE_LINE="Include = ${REPO_FILE_PATH}"
