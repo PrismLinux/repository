@@ -24,9 +24,9 @@ function showTab(tabName: string) {
 <template>
   <div>
     <div class="header">
-      <h1>CrystalLinux Repository</h1>
+      <h1>PrismLinux Repository</h1>
       <p>
-        Arch Linux compatible package repository for CrystalLinux distribution
+        Arch Linux compatible package repository for PrismLinux distribution
       </p>
     </div>
 

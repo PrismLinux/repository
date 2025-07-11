@@ -27,13 +27,13 @@ const copyToClipboard = async (text: string, index: number) => {
       <div class="code">
         <code>
           sudo bash -c "$(curl -fsSL
-          https://gitlab.com/crystalnetwork-studio/linux/CrystalLinux/tooling/package-repository/-/raw/master/install.sh)"
+          https://gitlab.com/crystalnetwork-studio/linux/prismlinux/websites/repository/-/raw/master/install.sh)"
         </code>
         <button
           class="copy-button"
           @click="
             copyToClipboard(
-              'sudo bash -c &quot;$(curl -fsSL https://gitlab.com/crystalnetwork-studio/linux/CrystalLinux/tooling/package-repository/-/raw/master/install.sh)&quot;',
+              'sudo bash -c &quot;$(curl -fsSL https://gitlab.com/crystalnetwork-studio/linux/prismlinux/websites/repository/-/raw/master/install.sh)&quot;',
               0,
             )
           "
@@ -109,14 +109,14 @@ const copyToClipboard = async (text: string, index: number) => {
       <div class="code">
         <code>
           sudo bash -c "$(curl -fsSL
-          https://gitlab.com/crystalnetwork-studio/linux/CrystalLinux/tooling/package-repository/-/raw/master/install.sh)"
+          https://gitlab.com/crystalnetwork-studio/linux/prismlinux/websites/repository/-/raw/master/install.sh)"
           -- --uninstall
         </code>
         <button
           class="copy-button"
           @click="
             copyToClipboard(
-              'sudo bash -c &quot;$(curl -fsSL https://gitlab.com/crystalnetwork-studio/linux/CrystalLinux/tooling/package-repository/-/raw/master/install.sh)&quot; -- --uninstall',
+              'sudo bash -c &quot;$(curl -fsSL https://gitlab.com/crystalnetwork-studio/linux/prismlinux/websites/repository/-/raw/master/install.sh)&quot; -- --uninstall',
               4,
             )
           "

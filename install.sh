@@ -18,8 +18,8 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 # --- Configuration ---
-REPO_NAME="crystallinux"
-SERVER_URL="https://crystalnetwork-studio.gitlab.io/linux/CrystalLinux/tooling/package-repository/\$arch"
+REPO_NAME="prismlinux"
+SERVER_URL="https://crystalnetwork-studio.gitlab.io/linux/prismlinux/websites/repository/\$arch"
 
 # Configuration file paths
 REPO_FILE_NAME="${REPO_NAME}.conf"
