@@ -19,7 +19,8 @@
 
 # --- Configuration ---
 REPO_NAME="prismlinux"
-SERVER_URL="https://crystalnetwork-studio.gitlab.io/linux/prismlinux/websites/repository/\$arch"
+MIRRORLIST_PKG_URL="https://crystalnetwork-studio.gitlab.io/linux/prismlinux/websites/repository/x86_64/prismlinux-mirrorlist-2025-1-any.pkg.tar.zst"
+MIRRORLIST_PKG_NAME="prismlinux-mirrorlist"
 
 # Configuration file paths
 REPO_FILE_NAME="${REPO_NAME}-mirrorlist.conf"
@@ -85,52 +86,58 @@ check_distro() {
 install_repo() {
     print_info "Starting repository installation..."
 
-    # Create the repository configuration file content.
-    REPO_CONFIG="[${REPO_NAME}]\nSigLevel = Optional TrustAll\nServer = ${SERVER_URL}\n"
-
-    print_info "Creating repository configuration file at ${REPO_FILE_PATH}..."
-    echo -e "${REPO_CONFIG}" | sudo tee "${REPO_FILE_PATH}" > /dev/null
-    if [[ $? -ne 0 ]]; then
-        print_error "Failed to create repository configuration file."
+    # Install the mirrorlist package
+    print_info "Installing prismlinux-mirrorlist package from ${MIRRORLIST_PKG_URL}..."
+    if sudo pacman -U --noconfirm "${MIRRORLIST_PKG_URL}"; then
+        print_success "prismlinux-mirrorlist package installed successfully."
+    else
+        print_error "Failed to install prismlinux-mirrorlist package."
         exit 1
     fi
-    print_success "Repository configuration file created."
 
-    print_info "Checking if '${INCLUDE_LINE}' exists in ${PACMAN_CONF}..."
-    if grep -qF "${INCLUDE_LINE}" "${PACMAN_CONF}"; then
-        print_info "Include line already exists in ${PACMAN_CONF}. No changes needed there."
+    # Check if the mirrorlist file was created
+    if [[ ! -f "${REPO_FILE_PATH}" ]]; then
+        print_error "Mirrorlist file ${REPO_FILE_PATH} was not created by the package."
+        print_error "Please check the package contents or contact the repository maintainer."
+        exit 1
+    fi
+
+    # Create the repository section in pacman.conf
+    REPO_SECTION="[${REPO_NAME}]\nSigLevel = Optional TrustAll\nInclude = ${REPO_FILE_PATH}"
+    
+    print_info "Checking if repository section exists in ${PACMAN_CONF}..."
+    if grep -qF "[${REPO_NAME}]" "${PACMAN_CONF}"; then
+        print_info "Repository section already exists in ${PACMAN_CONF}. No changes needed there."
     else
-        print_info "Adding Include line to ${PACMAN_CONF} at desired position..."
+        print_info "Adding repository section to ${PACMAN_CONF} at desired position..."
         # Find the line number of the first standard repository section that is not commented out.
         # This ensures the new repository is prioritized above core, extra, multilib, and any testing repos.
         local FIRST_REPO_LINE=$(sudo grep -n -E '^\s*\[(chaotic-aur|core|extra|multilib|testing|community|community-testing|multilib-testing)\]' "${PACMAN_CONF}" | head -n 1 | cut -d: -f1)
 
         if [[ -n "$FIRST_REPO_LINE" ]]; then
-            # Insert the include line before the first found standard repository section.
+            # Insert the repository section before the first found standard repository section.
             # Using `sed -i` to edit the file in place.
-            if sudo sed -i "${FIRST_REPO_LINE}i ${INCLUDE_LINE}" "${PACMAN_CONF}"; then
-                print_success "Include line added to ${PACMAN_CONF} before standard repositories."
+            if sudo sed -i "${FIRST_REPO_LINE}i ${REPO_SECTION}\n" "${PACMAN_CONF}"; then
+                print_success "Repository section added to ${PACMAN_CONF} before standard repositories."
             else
-                print_error "Failed to insert Include line at the desired position."
+                print_error "Failed to insert repository section at the desired position."
                 print_error "Attempting to append instead as a fallback."
                 # Fallback to appending if insertion fails (e.g., sed error)
-                if sudo sh -c "echo '${INCLUDE_LINE}' >> '${PACMAN_CONF}'"; then
-                    print_success "Include line appended to ${PACMAN_CONF} as a fallback."
+                if sudo sh -c "echo -e '${REPO_SECTION}' >> '${PACMAN_CONF}'"; then
+                    print_success "Repository section appended to ${PACMAN_CONF} as a fallback."
                 else
-                    print_error "Failed to append Include line to ${PACMAN_CONF}."
-                    sudo rm -f "${REPO_FILE_PATH}"
+                    print_error "Failed to append repository section to ${PACMAN_CONF}."
                     exit 1
                 fi
             fi
         else
             print_info "No standard repository sections (e.g., [core], [extra], [multilib]) found in ${PACMAN_CONF}."
-            print_info "Appending Include line to ${PACMAN_CONF} as a fallback..."
+            print_info "Appending repository section to ${PACMAN_CONF} as a fallback..."
             # If no standard repository sections are found, append it to the end.
-            if sudo sh -c "echo '${INCLUDE_LINE}' >> '${PACMAN_CONF}'"; then
-                print_success "Include line appended to ${PACMAN_CONF}."
+            if sudo sh -c "echo -e '${REPO_SECTION}' >> '${PACMAN_CONF}'"; then
+                print_success "Repository section appended to ${PACMAN_CONF}."
             else
-                print_error "Failed to append Include line to ${PACMAN_CONF}."
-                sudo rm -f "${REPO_FILE_PATH}"
+                print_error "Failed to append repository section to ${PACMAN_CONF}."
                 exit 1
             fi
         fi
@@ -143,8 +150,17 @@ install_repo() {
 uninstall_repo() {
     print_info "Starting repository uninstallation..."
 
+    # Remove the mirrorlist package
+    print_info "Removing prismlinux-mirrorlist package..."
+    if sudo pacman -R --noconfirm "${MIRRORLIST_PKG_NAME}"; then
+        print_success "prismlinux-mirrorlist package removed successfully."
+    else
+        print_info "Package ${MIRRORLIST_PKG_NAME} not found or already removed."
+    fi
+
+    # Check if mirrorlist file still exists and remove it manually if needed
     if [[ -f "${REPO_FILE_PATH}" ]]; then
-        print_info "Removing repository configuration file ${REPO_FILE_PATH}..."
+        print_info "Removing remaining repository configuration file ${REPO_FILE_PATH}..."
         if sudo rm -f "${REPO_FILE_PATH}"; then
             print_success "Repository configuration file removed."
         else
@@ -154,18 +170,21 @@ uninstall_repo() {
         print_info "Repository configuration file ${REPO_FILE_PATH} not found."
     fi
 
-    print_info "Checking for Include line in ${PACMAN_CONF}..."
-    if grep -qF "${INCLUDE_LINE}" "${PACMAN_CONF}"; then
-        print_info "Removing Include line from ${PACMAN_CONF}..."
-        if sudo sed -i "\#^${INCLUDE_LINE}\$#d" "${PACMAN_CONF}"; then
-            print_success "Include line removed from ${PACMAN_CONF}."
+    print_info "Checking for repository section in ${PACMAN_CONF}..."
+    if grep -qF "[${REPO_NAME}]" "${PACMAN_CONF}"; then
+        print_info "Removing repository section from ${PACMAN_CONF}..."
+        # Remove the entire repository section (including the header and all related lines)
+        if sudo sed -i "/^\[${REPO_NAME}\]/,/^$/d" "${PACMAN_CONF}"; then
+            print_success "Repository section removed from ${PACMAN_CONF}."
         else
-            print_error "Failed to remove Include line automatically. Please remove it manually from ${PACMAN_CONF}:"
-            print_error "${INCLUDE_LINE}"
+            print_error "Failed to remove repository section automatically. Please remove it manually from ${PACMAN_CONF}:"
+            print_error "[${REPO_NAME}]"
+            print_error "SigLevel = Optional TrustAll"
+            print_error "Include = ${REPO_FILE_PATH}"
             exit 1
         fi
     else
-        print_info "Include line not found in ${PACMAN_CONF}. No changes needed there."
+        print_info "Repository section not found in ${PACMAN_CONF}. No changes needed there."
     fi
 
     print_success "Repository '${REPO_NAME}' successfully uninstalled."
