@@ -4,6 +4,7 @@
 70964684 # Prism Linux Fish Theme
 71182518 # About Prism Linux
 71409077 # Crystallize CLI
+71565033 # Crystallize GUI
 71465108 # Prism Package manager
 71571505 # Prism Mirrorlist
 71590048 # Grub
