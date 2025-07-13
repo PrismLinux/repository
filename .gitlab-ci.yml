@@ -332,6 +332,9 @@ pages:
 
 cleanup_old_artifacts:
   stage: cleanup
+  before_script:
+  - pacman -Syu --noconfirm
+  - pacman -S --noconfirm curl jq base-devel git unzip
   script: |
     set -eo pipefail
     
