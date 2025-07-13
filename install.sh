@@ -26,7 +26,6 @@ MIRRORLIST_PKG_NAME="prismlinux-mirrorlist"
 REPO_FILE_NAME="${REPO_NAME}-mirrorlist.conf"
 REPO_FILE_PATH="/etc/pacman.d/${REPO_FILE_NAME}"
 PACMAN_CONF="/etc/pacman.conf"
-INCLUDE_LINE="Include = ${REPO_FILE_PATH}"
 
 # --- Helper Functions ---
 print_success() {
