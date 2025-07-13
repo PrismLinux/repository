@@ -33,6 +33,9 @@ stages:
 
 check_packages:
   stage: check
+  before_script:
+  - pacman -Syu --noconfirm
+  - pacman -S --noconfirm curl jq base-devel git unzip
   script: |
     set -eo pipefail
     
