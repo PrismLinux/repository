@@ -10,12 +10,12 @@ variables:
   REBUILD_TRIGGER_FILE: "rebuild_packages.txt"
   PACKAGES_CONFIG: "packages.txt"
   STORAGE_DRIVER: "vfs"
-  PODMAN_SYSTEMD_UNIT: "podman.socket"
+  CONTAINER_NAME: "repo_builder_${CI_JOB_ID}"
 
 before_script:
   # Update system and install dependencies
   - pacman -Syu --noconfirm
-  - pacman -S --noconfirm crun podman podman-docker podman-compose python python-pip fuse-overlayfs
+  - pacman -S --noconfirm crun podman podman-docker python python-pip fuse-overlayfs
 
   # Configure Podman storage for CI environment
   - mkdir -p ~/.config/containers
@@ -25,7 +25,7 @@ before_script:
     driver = "vfs"
     graphroot = "/tmp/containers/storage"
     runroot = "/tmp/containers/storage"
-    
+
     [storage.options]
     EOF
 
@@ -36,7 +36,7 @@ before_script:
     log_driver = "k8s-file"
     cgroup_manager = "cgroupfs"
     events_logger = "file"
-    
+
     [engine]
     cgroup_manager = "cgroupfs"
     events_logger = "file"
@@ -46,14 +46,19 @@ before_script:
   # Create necessary directories
   - mkdir -p /tmp/containers/storage
   - mkdir -p ~/.local/share/containers
+  - mkdir -p cache public
 
   # Test Podman configuration
   - podman info
-  - podman-compose version
+  - podman version
 
   # Export environment variables for Podman
   - export STORAGE_DRIVER=vfs
   - export BUILDAH_ISOLATION=chroot
+
+  # Clean up any existing containers
+  - podman rm -f ${CONTAINER_NAME} || true
+  - podman system prune -f || true
 
 stages:
   - validate
@@ -66,11 +71,34 @@ validate_config:
   script:
     - echo "Validating configuration..."
     - ls -la
-    - test -f compose.yml || (echo "compose.yml not found!" && exit 1)
+    - test -f Dockerfile || (echo "Dockerfile not found!" && exit 1)
     - test -f packages.txt || (echo "packages.txt not found!" && exit 1)
     - test -d scripts || (echo "scripts directory not found!" && exit 1)
-    - podman-compose -f compose.yml config
-    - podman-compose -f compose.yml up --build --exit-code-from repo_builder
+
+    # Build the container image
+    - podman build -t repo_builder:latest .
+
+    # Run the container directly
+    - |
+      podman run --rm \
+        --name ${CONTAINER_NAME} \
+        -v $(pwd)/cache:/app/cache \
+        -v $(pwd)/public:/app/public \
+        -v $(pwd)/scripts:/app/scripts \
+        -v $(pwd)/packages.txt:/app/packages.txt \
+        -v $(pwd)/website:/app/website \
+        -e GITLAB_TOKEN=${GITLAB_TOKEN} \
+        -e FORCE_REBUILD=${FORCE_REBUILD} \
+        -e REPO_NAME=${REPO_NAME} \
+        -e ARCH=${ARCH} \
+        -e REPO_DIR=${REPO_DIR} \
+        -e CACHE_DIR=${CACHE_DIR} \
+        -e CHECKSUMS_FILE=${CHECKSUMS_FILE} \
+        -e REMOTE_PACKAGES_FILE=${REMOTE_PACKAGES_FILE} \
+        -e REBUILD_TRIGGER_FILE=${REBUILD_TRIGGER_FILE} \
+        -e PACKAGES_CONFIG=${PACKAGES_CONFIG} \
+        repo_builder:latest /app/scripts/run.sh
+
     - test -f public/rebuild_needed.txt && cat public/rebuild_needed.txt || echo "rebuild_needed.txt not found"
   artifacts:
     paths:
@@ -94,7 +122,31 @@ check_package_updates:
       artifacts: true
   script:
     - echo "Checking for package updates..."
-    - podman-compose -f compose.yml up --build --exit-code-from repo_builder
+
+    # Clean up any existing containers
+    - podman rm -f ${CONTAINER_NAME} || true
+
+    # Run the container directly
+    - |
+      podman run --rm \
+        --name ${CONTAINER_NAME} \
+        -v $(pwd)/cache:/app/cache \
+        -v $(pwd)/public:/app/public \
+        -v $(pwd)/scripts:/app/scripts \
+        -v $(pwd)/packages.txt:/app/packages.txt \
+        -v $(pwd)/website:/app/website \
+        -e GITLAB_TOKEN=${GITLAB_TOKEN} \
+        -e FORCE_REBUILD=${FORCE_REBUILD} \
+        -e REPO_NAME=${REPO_NAME} \
+        -e ARCH=${ARCH} \
+        -e REPO_DIR=${REPO_DIR} \
+        -e CACHE_DIR=${CACHE_DIR} \
+        -e CHECKSUMS_FILE=${CHECKSUMS_FILE} \
+        -e REMOTE_PACKAGES_FILE=${REMOTE_PACKAGES_FILE} \
+        -e REBUILD_TRIGGER_FILE=${REBUILD_TRIGGER_FILE} \
+        -e PACKAGES_CONFIG=${PACKAGES_CONFIG} \
+        repo_builder:latest /app/scripts/run.sh
+
     - test -f public/rebuild_needed.txt && cat public/rebuild_needed.txt || echo "rebuild_needed.txt not found"
   artifacts:
     paths:
@@ -118,12 +170,35 @@ build_repository:
       artifacts: true
   script:
     - echo "Building repository..."
+
+    # Clean up any existing containers
+    - podman rm -f ${CONTAINER_NAME} || true
+
     - |
       if [ -f public/rebuild_needed.txt ] && [ "$(cat public/rebuild_needed.txt)" = "true" ] || [ "$FORCE_REBUILD" = "true" ]; then
         echo "Rebuild needed, starting build process..."
-        podman-compose -f compose.yml up --build --exit-code-from repo_builder
+        
+        podman run --rm \
+          --name ${CONTAINER_NAME} \
+          -v $(pwd)/cache:/app/cache \
+          -v $(pwd)/public:/app/public \
+          -v $(pwd)/scripts:/app/scripts \
+          -v $(pwd)/packages.txt:/app/packages.txt \
+          -v $(pwd)/website:/app/website \
+          -e GITLAB_TOKEN=${GITLAB_TOKEN} \
+          -e FORCE_REBUILD=${FORCE_REBUILD} \
+          -e REPO_NAME=${REPO_NAME} \
+          -e ARCH=${ARCH} \
+          -e REPO_DIR=${REPO_DIR} \
+          -e CACHE_DIR=${CACHE_DIR} \
+          -e CHECKSUMS_FILE=${CHECKSUMS_FILE} \
+          -e REMOTE_PACKAGES_FILE=${REMOTE_PACKAGES_FILE} \
+          -e REBUILD_TRIGGER_FILE=${REBUILD_TRIGGER_FILE} \
+          -e PACKAGES_CONFIG=${PACKAGES_CONFIG} \
+          repo_builder:latest /app/scripts/run.sh
       else
         echo "No rebuild needed, skipping build stage."
+        # Ensure public directory exists even if we skip build
         mkdir -p public
         echo "false" > public/rebuild_needed.txt
       fi
@@ -150,6 +225,8 @@ pages:
     - |
       if [ -d public ] && [ "$(ls -A public)" ]; then
         echo "Public directory contains files, proceeding with deployment"
+        # For GitLab Pages, we need files in the root public directory
+        # No need to copy to current directory as artifacts already specify public/
       else
         echo "Public directory is empty, creating index page"
         mkdir -p public
