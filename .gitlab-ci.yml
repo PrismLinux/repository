@@ -1,26 +1,27 @@
+# Use a base image with the necessary tools
 image: archlinux:latest
-
-variables:
-  REPO_NAME: "prismlinux"
-  ARCH: "x86_64"
-  REPO_DIR: "public"
-  CACHE_DIR: "cache"
-  # Let the script inside the container handle these paths
-  CONTAINER_IMAGE: "repo_builder:latest"
-  CONTAINER_NAME: "repo_builder_${CI_JOB_ID}"
-  STORAGE_DRIVER: "vfs" # For Podman configuration
 
 stages:
   - build_image
   - build_repo
   - deploy
 
+variables:
+  CONTAINER_IMAGE_TAG: ${CI_REGISTRY_IMAGE}/repository:latest
+
+  REPO_NAME: "prismlinux"
+  ARCH: "x86_64"
+  REPO_DIR: "public"
+  CACHE_DIR: "cache"
+  CONTAINER_NAME: "repo_builder_${CI_JOB_ID}"
+  STORAGE_DRIVER: "vfs"
+
 before_script:
-  # Update system and install dependencies
+  # Update system and install dependencies for running Podman
   - pacman -Syu --noconfirm
   - pacman -S --noconfirm crun podman python python-pip fuse-overlayfs
 
-  # Configure Podman storage for CI environment
+  # Configure Podman storage for the CI environment
   - mkdir -p ~/.config/containers
   - |
     cat > ~/.config/containers/storage.conf << EOF
@@ -31,11 +32,11 @@ before_script:
     [storage.options]
     EOF
 
-  # Configure containers.conf for CI compatibility
+  # Configure containers.conf for CI compatibility, using 'cgroupfs'
   - |
     cat > ~/.config/containers/containers.conf << EOF
     [engine]
-    cgroup_manager = "cgroupfs" # <-- CORRECTED
+    cgroup_manager = "cgroupfs"
     events_logger = "file"
     runtime = "crun"
     EOF
@@ -43,31 +44,34 @@ before_script:
   # Create necessary directories
   - mkdir -p /tmp/containers/storage cache public
 
-  # Test Podman configuration
+  # Verify Podman is working
   - podman info
 
 build_container_image:
   stage: build_image
   script:
-    - echo "Building container image..."
-    - test -f Dockerfile || (echo "Dockerfile not found!" && exit 1)
-    - podman build -t ${CONTAINER_IMAGE} .
-  # No artifacts needed, the image is stored locally on the runner for subsequent stages
+    - echo "Logging in to GitLab Container Registry..."
+    - podman login -u "${CI_REGISTRY_USER}" -p "${CI_JOB_TOKEN}" ${CI_REGISTRY}
+
+    - echo "Building and pushing container image to ${CONTAINER_IMAGE_TAG}..."
+    - podman build -t ${CONTAINER_IMAGE_TAG} .
+    - podman push ${CONTAINER_IMAGE_TAG}
 
 build_repository:
   stage: build_repo
   needs:
-    - build_container_image
+    - build_container_image # This job depends on the image being built
   script:
-    - echo "Running repository build script..."
-    # Clean up any previous container instance, just in case
-    - podman rm -f ${CONTAINER_NAME} || true
+    - echo "Logging in to GitLab Container Registry..."
+    # Log in again to be able to pull the image from the registry
+    - podman login -u "${CI_REGISTRY_USER}" -p "${CI_JOB_TOKEN}" ${CI_REGISTRY}
 
-    # This single run handles checking for updates AND building the repo if needed.
+    - echo "Running repository build script using image from registry..."
+    - podman rm -f ${CONTAINER_NAME} || true
     - |
       podman run --rm \
         --name ${CONTAINER_NAME} \
-        --cgroup-manager cgroupfs \ # <-- CORRECTED
+        --cgroup-manager cgroupfs \
         --security-opt label=disable \
         --systemd=false \
         -v "$(pwd)/cache:/app/cache" \
@@ -79,14 +83,14 @@ build_repository:
         -e FORCE_REBUILD \
         -e REPO_NAME \
         -e ARCH \
-        ${CONTAINER_IMAGE} /app/scripts/run.sh
+        ${CONTAINER_IMAGE_TAG} /app/scripts/run.sh
 
     - echo "Script execution finished. Listing public directory:"
     - ls -la public/
   artifacts:
     paths:
       - public/
-      - cache/ # Cache can be useful for subsequent runs on the same branch
+      - cache/
     expire_in: 1 week
   rules:
     - if: $CI_PIPELINE_SOURCE == 'schedule'
@@ -110,6 +114,7 @@ pages:
       else
         echo "Public directory contains files. Deployment will proceed."
       fi
+    - echo "Contents of public directory:"
     - ls -la public
   artifacts:
     paths:
