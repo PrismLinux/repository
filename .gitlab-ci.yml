@@ -3,8 +3,6 @@
 # Optimized for performance, security, and maintainability
 # =============================================================================
 image: archlinux:base-devel
-include:
-  - template: Jobs/SAST.gitlab-ci.yml
 
 variables:
   REPO_NAME: "prismlinux"
@@ -56,6 +54,8 @@ stages:
   - deploy
   - cleanup
 
+include:
+  - template: Security/SAST.gitlab-ci.yml
 # =============================================================================
 # YAML Anchors for DRY principle
 # =============================================================================
