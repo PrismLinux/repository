@@ -328,7 +328,7 @@ pages:
   needs:
     - job: build_repository
       artifacts: true
-      optional: true
+      optional: false
   before_script:
     - pacman -Syu --noconfirm
     - pacman -S --noconfirm curl jq unzip rsync
@@ -523,6 +523,3 @@ pages:
   rules:
     - if: $REBUILD_NEEDED == "true"
     - if: $FORCE_REBUILD == "true"
-    - if: $CI_PIPELINE_SOURCE == 'web'
-    - if: $CI_PIPELINE_SOURCE == 'schedule'
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
