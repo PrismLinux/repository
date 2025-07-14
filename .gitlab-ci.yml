@@ -7,7 +7,6 @@ stages:
 
 variables:
   CONTAINER_IMAGE_TAG: ${CI_REGISTRY_IMAGE}:latest
-
   REPO_NAME: "prismlinux"
   ARCH: "x86_64"
   REPO_DIR: "public"
@@ -31,11 +30,11 @@ before_script:
     [storage.options]
     EOF
 
-  # Configure containers.conf for CI compatibility, using 'cgroupfs'
+  # Configure containers.conf for CI compatibility, using 'systemd'
   - |
     cat > ~/.config/containers/containers.conf << EOF
     [engine]
-    cgroup_manager = "cgroupfs"
+    cgroup_manager = "systemd"
     events_logger = "file"
     runtime = "crun"
     EOF
@@ -51,7 +50,6 @@ build_container_image:
   script:
     - echo "Logging in to GitLab Container Registry..."
     - podman login -u "${CI_REGISTRY_USER}" -p "${CI_JOB_TOKEN}" ${CI_REGISTRY}
-
     - echo "Building and pushing container image to ${CONTAINER_IMAGE_TAG}..."
     - podman build -t ${CONTAINER_IMAGE_TAG} .
     - podman push ${CONTAINER_IMAGE_TAG}
@@ -59,19 +57,17 @@ build_container_image:
 build_repository:
   stage: build_repo
   needs:
-    - build_container_image # This job depends on the image being built
+    - build_container_image
   script:
     - echo "Logging in to GitLab Container Registry..."
-    # Log in again to be able to pull the image from the registry
     - podman login -u "${CI_REGISTRY_USER}" -p "${CI_JOB_TOKEN}" ${CI_REGISTRY}
-
     - echo "Running repository build script using image from registry..."
     - podman rm -f ${CONTAINER_NAME} || true
     - |
       podman run --rm \
         --name ${CONTAINER_NAME} \
         --pids-limit=-1 \
-        --cgroup-manager cgroupfs \
+        --cgroup-manager systemd \
         --security-opt label=disable \
         --systemd=false \
         -v "$(pwd)/cache:/app/cache" \
@@ -84,7 +80,6 @@ build_repository:
         -e REPO_NAME \
         -e ARCH \
         ${CONTAINER_IMAGE_TAG} /app/scripts/run.sh
-
     - echo "Script execution finished. Listing public directory:"
     - ls -la public/
   artifacts:
