@@ -5,12 +5,15 @@ variables:
   ARCH: "x86_64"
   REPO_DIR: "public"
   CACHE_DIR: "cache"
-  CHECKSUMS_FILE: "package_checksums.txt"
-  REMOTE_PACKAGES_FILE: "remote_packages.json"
-  REBUILD_TRIGGER_FILE: "rebuild_packages.txt"
-  PACKAGES_CONFIG: "packages.txt"
-  STORAGE_DRIVER: "vfs"
+  # Let the script inside the container handle these paths
+  CONTAINER_IMAGE: "repo_builder:latest"
   CONTAINER_NAME: "repo_builder_${CI_JOB_ID}"
+  STORAGE_DRIVER: "vfs" # For Podman configuration
+
+stages:
+  - build_image
+  - build_repo
+  - deploy
 
 before_script:
   # Update system and install dependencies
@@ -22,200 +25,68 @@ before_script:
   - |
     cat > ~/.config/containers/storage.conf << EOF
     [storage]
-    driver = "vfs"
+    driver = "${STORAGE_DRIVER}"
     graphroot = "/tmp/containers/storage"
     runroot = "/tmp/containers/storage"
-
     [storage.options]
     EOF
 
-  # Configure containers.conf for CI compatibility - disable cgroup management
+  # Configure containers.conf for CI compatibility
   - |
     cat > ~/.config/containers/containers.conf << EOF
-    [containers]
-    log_driver = "k8s-file"
-    cgroup_manager = "disabled"
-    events_logger = "file"
-
     [engine]
-    cgroup_manager = "disabled"
+    cgroup_manager = "cgroupfs" # <-- CORRECTED
     events_logger = "file"
     runtime = "crun"
-    conmon_path = ["/usr/bin/conmon"]
     EOF
 
   # Create necessary directories
-  - mkdir -p /tmp/containers/storage
-  - mkdir -p ~/.local/share/containers
-  - mkdir -p cache public
+  - mkdir -p /tmp/containers/storage cache public
 
   # Test Podman configuration
   - podman info
-  - podman version
 
-  # Export environment variables for Podman
-  - export STORAGE_DRIVER=vfs
-  - export BUILDAH_ISOLATION=chroot
-
-  # Clean up any existing containers
-  - podman rm -f ${CONTAINER_NAME} || true
-  - podman system prune -f || true
-
-stages:
-  - validate
-  - check
-  - build
-  - deploy
-
-validate_config:
-  stage: validate
+build_container_image:
+  stage: build_image
   script:
-    - echo "Validating configuration..."
-    - ls -la
+    - echo "Building container image..."
     - test -f Dockerfile || (echo "Dockerfile not found!" && exit 1)
-    - test -f packages.txt || (echo "packages.txt not found!" && exit 1)
-    - test -d scripts || (echo "scripts directory not found!" && exit 1)
-
-    # Build the container image
-    - podman build -t repo_builder:latest .
-
-    # Run the container directly with disabled cgroup management
-    - |
-      podman run --rm \
-        --name ${CONTAINER_NAME} \
-        --security-opt label=disable \
-        --cgroup-manager disabled \
-        --systemd=false \
-        -v $(pwd)/cache:/app/cache \
-        -v $(pwd)/public:/app/public \
-        -v $(pwd)/scripts:/app/scripts \
-        -v $(pwd)/packages.txt:/app/packages.txt \
-        -v $(pwd)/website:/app/website \
-        -e GITLAB_TOKEN=${GITLAB_TOKEN} \
-        -e FORCE_REBUILD=${FORCE_REBUILD} \
-        -e REPO_NAME=${REPO_NAME} \
-        -e ARCH=${ARCH} \
-        -e REPO_DIR=${REPO_DIR} \
-        -e CACHE_DIR=${CACHE_DIR} \
-        -e CHECKSUMS_FILE=${CHECKSUMS_FILE} \
-        -e REMOTE_PACKAGES_FILE=${REMOTE_PACKAGES_FILE} \
-        -e REBUILD_TRIGGER_FILE=${REBUILD_TRIGGER_FILE} \
-        -e PACKAGES_CONFIG=${PACKAGES_CONFIG} \
-        repo_builder:latest /app/scripts/run.sh
-
-    - test -f public/rebuild_needed.txt && cat public/rebuild_needed.txt || echo "rebuild_needed.txt not found"
-  artifacts:
-    paths:
-      - cache/
-      - public/
-      - remote_packages.json
-      - rebuild_packages.txt
-      - package_checksums.txt
-    expire_in: 1 hour
-  rules:
-    - if: $CI_PIPELINE_SOURCE == 'schedule'
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-    - if: $CI_PIPELINE_SOURCE == 'merge_request_event'
-    - if: $CI_PIPELINE_SOURCE == 'web'
-    - if: $FORCE_REBUILD == "true"
-
-check_package_updates:
-  stage: check
-  needs:
-    - job: validate_config
-      artifacts: true
-  script:
-    - echo "Checking for package updates..."
-
-    # Clean up any existing containers
-    - podman rm -f ${CONTAINER_NAME} || true
-
-    # Run the container directly
-    - |
-      podman run --rm \
-        --name ${CONTAINER_NAME} \
-        --security-opt label=disable \
-        --cgroup-manager disabled \
-        --systemd=false \
-        -v $(pwd)/cache:/app/cache \
-        -v $(pwd)/public:/app/public \
-        -v $(pwd)/scripts:/app/scripts \
-        -v $(pwd)/packages.txt:/app/packages.txt \
-        -v $(pwd)/website:/app/website \
-        -e GITLAB_TOKEN=${GITLAB_TOKEN} \
-        -e FORCE_REBUILD=${FORCE_REBUILD} \
-        -e REPO_NAME=${REPO_NAME} \
-        -e ARCH=${ARCH} \
-        -e REPO_DIR=${REPO_DIR} \
-        -e CACHE_DIR=${CACHE_DIR} \
-        -e CHECKSUMS_FILE=${CHECKSUMS_FILE} \
-        -e REMOTE_PACKAGES_FILE=${REMOTE_PACKAGES_FILE} \
-        -e REBUILD_TRIGGER_FILE=${REBUILD_TRIGGER_FILE} \
-        -e PACKAGES_CONFIG=${PACKAGES_CONFIG} \
-        repo_builder:latest /app/scripts/run.sh
-
-    - test -f public/rebuild_needed.txt && cat public/rebuild_needed.txt || echo "rebuild_needed.txt not found"
-  artifacts:
-    paths:
-      - cache/
-      - public/
-      - remote_packages.json
-      - rebuild_packages.txt
-      - package_checksums.txt
-    expire_in: 1 hour
-  rules:
-    - if: $CI_PIPELINE_SOURCE == 'schedule'
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-    - if: $CI_PIPELINE_SOURCE == 'merge_request_event'
-    - if: $CI_PIPELINE_SOURCE == 'web'
-    - if: $FORCE_REBUILD == "true"
+    - podman build -t ${CONTAINER_IMAGE} .
+  # No artifacts needed, the image is stored locally on the runner for subsequent stages
 
 build_repository:
-  stage: build
+  stage: build_repo
   needs:
-    - job: check_package_updates
-      artifacts: true
+    - build_container_image
   script:
-    - echo "Building repository..."
-
-    # Clean up any existing containers
+    - echo "Running repository build script..."
+    # Clean up any previous container instance, just in case
     - podman rm -f ${CONTAINER_NAME} || true
 
+    # This single run handles checking for updates AND building the repo if needed.
     - |
-      if [ -f public/rebuild_needed.txt ] && [ "$(cat public/rebuild_needed.txt)" = "true" ] || [ "$FORCE_REBUILD" = "true" ]; then
-        echo "Rebuild needed, starting build process..."
-        
-        podman run --rm \
-          --name ${CONTAINER_NAME} \
-          --security-opt label=disable \
-          --cgroup-manager disabled \
-          --systemd=false \
-          -v $(pwd)/cache:/app/cache \
-          -v $(pwd)/public:/app/public \
-          -v $(pwd)/scripts:/app/scripts \
-          -v $(pwd)/packages.txt:/app/packages.txt \
-          -v $(pwd)/website:/app/website \
-          -e GITLAB_TOKEN=${GITLAB_TOKEN} \
-          -e FORCE_REBUILD=${FORCE_REBUILD} \
-          -e REPO_NAME=${REPO_NAME} \
-          -e ARCH=${ARCH} \
-          -e REPO_DIR=${REPO_DIR} \
-          -e CACHE_DIR=${CACHE_DIR} \
-          -e CHECKSUMS_FILE=${CHECKSUMS_FILE} \
-          -e REMOTE_PACKAGES_FILE=${REMOTE_PACKAGES_FILE} \
-          -e REBUILD_TRIGGER_FILE=${REBUILD_TRIGGER_FILE} \
-          -e PACKAGES_CONFIG=${PACKAGES_CONFIG} \
-          repo_builder:latest /app/scripts/run.sh
-      else
-        echo "No rebuild needed, skipping build stage."
-        # Ensure public directory exists even if we skip build
-        mkdir -p public
-        echo "false" > public/rebuild_needed.txt
-      fi
+      podman run --rm \
+        --name ${CONTAINER_NAME} \
+        --cgroup-manager cgroupfs \ # <-- CORRECTED
+        --security-opt label=disable \
+        --systemd=false \
+        -v "$(pwd)/cache:/app/cache" \
+        -v "$(pwd)/public:/app/public" \
+        -v "$(pwd)/scripts:/app/scripts" \
+        -v "$(pwd)/packages.txt:/app/packages.txt" \
+        -v "$(pwd)/website:/app/website" \
+        -e GITLAB_TOKEN \
+        -e FORCE_REBUILD \
+        -e REPO_NAME \
+        -e ARCH \
+        ${CONTAINER_IMAGE} /app/scripts/run.sh
+
+    - echo "Script execution finished. Listing public directory:"
+    - ls -la public/
   artifacts:
     paths:
       - public/
-      - cache/
+      - cache/ # Cache can be useful for subsequent runs on the same branch
     expire_in: 1 week
   rules:
     - if: $CI_PIPELINE_SOURCE == 'schedule'
@@ -231,21 +102,17 @@ pages:
       artifacts: true
   script:
     - echo "Deploying to GitLab Pages..."
-    - ls -la public/
     - |
-      if [ -d public ] && [ "$(ls -A public)" ]; then
-        echo "Public directory contains files, proceeding with deployment"
-        # For GitLab Pages, we need files in the root public directory
-        # No need to copy to current directory as artifacts already specify public/
-      else
-        echo "Public directory is empty, creating index page"
+      if [ ! -d public ] || [ -z "$(ls -A public)" ]; then
+        echo "Public directory is empty. Creating a placeholder index.html."
         mkdir -p public
-        echo "<h1>Repository is being built</h1>" > public/index.html
+        echo "<h1>Repository deployment in progress.</h1>" > public/index.html
+      else
+        echo "Public directory contains files. Deployment will proceed."
       fi
+    - ls -la public
   artifacts:
     paths:
       - public
-    expire_in: 1 month
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-    - if: $FORCE_REBUILD == "true"
