@@ -49,7 +49,9 @@ stages:
   - prepare
   - security
   - check
+  - generate
   - build
+  - package
   - test
   - deploy
   - cleanup
@@ -193,7 +195,7 @@ check_packages:
         if [ -z "$latest_release" ] || [ "$latest_release" = "null" ]; then
           echo "WARNING: No releases found for project ${project_id}. Skipping."
           return 1
-        fi
+        }
         
         # Process assets with better error handling
         while IFS= read -r asset; do
@@ -300,149 +302,100 @@ check_packages:
       junit: "check_report.xml"
 
 # =============================================================================
-# BUILD STAGE
+# GENERATE STAGE
 # =============================================================================
 
-build_packages:
-  stage: build
+generate-build-jobs:
+  stage: generate
   needs: ["check_packages"]
-  before_script:
-    - *install_dependencies
-    - *gitlab_api_config
   script:
-    - *error_handling
     - |
+      set -e
+      echo "Generating dynamic build jobs..."
+      # Start with an empty file, no workflow rules for the child pipeline
+      echo "# This file is dynamically generated in the 'generate-build-jobs' job" > generated-jobs.yml
+
+      # Only generate jobs if the rebuild trigger file exists
+      if [ ! -f "${REBUILD_TRIGGER_FILE}" ]; then
+        echo "No packages to rebuild. Skipping job generation."
+        # Create an empty config so the trigger job doesn't fail
+        touch generated-jobs.yml
+        exit 0
+      fi
+
+      # Read packages to rebuild and generate a job for each
+      cat "${REBUILD_TRIGGER_FILE}" | while read -r pkg_filename; do
+        # This assumes we can find the project ID from the filename or another source.
+        # For now, we'll generate jobs based on all packages since the logic to map
+        # filename back to project ID is not in the check_packages job.
+        # A better approach would be for check_packages to output ID|filename.
+        # For now, we regenerate all.
+        echo "Re-generating all package build jobs due to detected changes."
+        break
+      done
+
+      grep -vE '^\s*#|^\s*$' packages_id.txt | awk '{print $1}' | while read -r project_id; do
+        cat >> generated-jobs.yml <<'EOF'
+
+build-package-${project_id}:
+  stage: build
+  image: archlinux:base-devel
+  variables:
+    PACKAGE_PROJECT_ID: "${project_id}"
+  before_script:
+    - 'echo "Installing dependencies..."'
+    - 'pacman -Syu --noconfirm --needed'
+    - 'pacman -S --noconfirm --needed curl jq base-devel git unzip'
+    - |
+      if [ -z "${GITLAB_TOKEN:-}" ]; then
+        echo "ERROR: GITLAB_TOKEN is not set"
+        exit 1
+      fi
+      export CURL_OPTS="--silent --show-error --fail --connect-timeout ${CURL_CONNECT_TIMEOUT} --max-time ${CURL_TIMEOUT}"
+  script:
+    - |
+      set -euo pipefail
+      trap 'echo "Error occurred at line $LINENO. Exit code: $?" >&2' ERR
+      
       REPO_ARCH_DIR="${REPO_DIR}/x86_64"
+      mkdir -p "${REPO_ARCH_DIR}"
 
-      echo "Ensuring required directories exist..."
-      mkdir -p "${REPO_ARCH_DIR}" "${CACHE_DIR}"
+      echo "Fetching package for project ID: ${PACKAGE_PROJECT_ID}"
 
-      declare -A remote_packages_map
-      declare -A packages_to_rebuild
+      releases_api_url="https://gitlab.com/api/v4/projects/${PACKAGE_PROJECT_ID}/releases"
+      latest_release=$(curl ${CURL_OPTS} --header "PRIVATE-TOKEN: $GITLAB_TOKEN" "$releases_api_url" | jq -r '.[0]? // empty')
+      
+      if [ -z "$latest_release" ] || [ "$latest_release" = "null" ]; then
+        echo "WARNING: No releases found for project ${PACKAGE_PROJECT_ID}. Skipping."
+        exit 0
+      fi
 
-      # Function to load packages to rebuild
-      load_rebuild_packages() {
-        if [ -f "${REBUILD_TRIGGER_FILE}" ]; then
-          while IFS= read -r pkg_filename; do
-            if [ -n "$pkg_filename" ]; then
-              packages_to_rebuild["$pkg_filename"]=1
-            fi
-          done < "${REBUILD_TRIGGER_FILE}"
-        fi
-      }
+      asset_url=$(echo "$latest_release" | jq -r '.assets.links[]? | select(.name | endswith(".pkg.tar.zst")) | .url' | head -n 1)
+      asset_name=$(echo "$latest_release" | jq -r '.assets.links[]? | select(.name | endswith(".pkg.tar.zst")) | .name' | head -n 1)
 
-      # Function to get all remote packages (reused from check job)
-      get_all_remote_packages() {
-        local project_ids
-        project_ids=$(grep -vE '^\s*#|^\s*$' packages_id.txt | awk '{print $1}')
-        
-        for project_id in $project_ids; do
-          local releases_api_url="https://gitlab.com/api/v4/projects/${project_id}/releases"
-          local latest_release
-          latest_release=$(curl ${CURL_OPTS} --header "PRIVATE-TOKEN: $GITLAB_TOKEN" "$releases_api_url" 2>/dev/null | jq -r '.[0]? // empty' || echo "")
-          
-          if [ -z "$latest_release" ] || [ "$latest_release" = "null" ]; then
-            continue
-          fi
-          
-          while IFS= read -r asset; do
-            if [ -z "$asset" ]; then continue; fi
-            local asset_url asset_name
-            asset_url=$(echo "$asset" | jq -r '.url // empty')
-            asset_name=$(echo "$asset" | jq -r '.name // empty')
-            
-            if [[ "$asset_name" == *.pkg.tar.zst ]] && [ -n "$asset_url" ]; then
-              remote_packages_map["${asset_name}"]="${asset_url}"
-            fi
-          done <<< "$(echo "$latest_release" | jq -c '.assets.links[]? // empty' 2>/dev/null)"
-        done
-      }
+      if [ -z "$asset_url" ] || [ -z "$asset_name" ]; then
+        echo "WARNING: Could not find a .pkg.tar.zst asset for project ${PACKAGE_PROJECT_ID}"
+        exit 0
+      fi
 
-      # Function to download package with retry logic
-      download_package() {
-        local pkg_filename="$1"
-        local download_url="$2"
-        local destination="$3"
-        local max_retries=3 retry_count=0
-        
-        while [ $retry_count -lt $max_retries ]; do
-          if curl --location ${CURL_OPTS} --header "PRIVATE-TOKEN: $GITLAB_TOKEN" --output "$destination" "$download_url"; then
-            return 0
-          else
-            retry_count=$((retry_count + 1))
-            echo "Retry $retry_count/$max_retries for ${pkg_filename}" >&2
-            sleep 2
-          fi
-        done
-        
-        echo "ERROR: Failed to download ${pkg_filename} after $max_retries attempts"
-        return 1
-      }
+      echo "Downloading ${asset_name}..."
+      curl --location ${CURL_OPTS} --header "PRIVATE-TOKEN: $GITLAB_TOKEN" --output "${REPO_ARCH_DIR}/${asset_name}" "${asset_url}"
 
-      # Main execution
-      load_rebuild_packages
-      get_all_remote_packages
-
-      echo "Processing packages (selective rebuild)..."
-
-      # Process packages with parallel downloads where possible
-      for pkg_filename in "${!remote_packages_map[@]}"; do
-        download_url="${remote_packages_map[$pkg_filename]}"
-        cached_file="${CACHE_DIR}/${pkg_filename}"
-        repo_file="${REPO_ARCH_DIR}/${pkg_filename}"
-        
-        if [[ -v packages_to_rebuild["$pkg_filename"] ]]; then
-          echo "  -> Rebuilding package: ${pkg_filename}"
-          if download_package "$pkg_filename" "$download_url" "$repo_file"; then
-            cp "$repo_file" "$cached_file"
-          fi
-        elif [ -f "$cached_file" ]; then
-          echo "  -> Using cached package: ${pkg_filename}"
-          cp "$cached_file" "$repo_file"
-        else
-          echo "  -> Downloading missing package: ${pkg_filename}"
-          if download_package "$pkg_filename" "$download_url" "$repo_file"; then
-            cp "$repo_file" "$cached_file"
-          fi
-        fi
+      echo "Package ${asset_name} downloaded."
+  artifacts:
+    paths:
+      - "${REPO_DIR}/x86_64/"
+    expire_in: 1 day
+EOF
+        # Inject the project_id into the placeholder
+        sed -i "s/\${project_id}/${project_id}/g" generated-jobs.yml
       done
-
-      # Cleanup old cached packages
-      echo "Cleaning up old cached packages..."
-      for cached_file in "${CACHE_DIR}"/*.pkg.tar.zst; do
-        [ -f "$cached_file" ] || continue
-        cached_filename=$(basename "$cached_file")
-        
-        if [[ ! -v remote_packages_map["$cached_filename"] ]]; then
-          echo "  -> Removing obsolete cached package: ${cached_filename}"
-          rm "$cached_file"
-        fi
-      done
-
-      # Update repository database with better error handling
-      echo "Updating repository database..."
-      (
-        cd "${REPO_ARCH_DIR}"
-        
-        # Remove old database files
-        rm -f ${REPO_NAME}.db* ${REPO_NAME}.files*
-        
-        if ls ./*.pkg.tar.zst 1> /dev/null 2>&1; then
-          echo "Found packages. Rebuilding repository database..."
-          repo-add "${REPO_NAME}.db.tar.gz" *.pkg.tar.zst
-          
-          # Create symbolic links
-          ln -sf "${REPO_NAME}.db.tar.gz" "${REPO_NAME}.db"
-          ln -sf "${REPO_NAME}.files.tar.gz" "${REPO_NAME}.files"
-        else
-          echo "No packages found in repository. Creating empty database..."
-          # Create empty database files
-          tar -czf "${REPO_NAME}.db.tar.gz" -T /dev/null
-          tar -czf "${REPO_NAME}.files.tar.gz" -T /dev/null
-          ln -sf "${REPO_NAME}.db.tar.gz" "${REPO_NAME}.db"
-          ln -sf "${REPO_NAME}.files.tar.gz" "${REPO_NAME}.files"
-        fi
-      )
+    - echo "--- Generated dynamic CI config ---"
+    - cat generated-jobs.yml
+    - echo "-----------------------------------"
+  artifacts:
+    paths:
+      - generated-jobs.yml
   rules:
     - if: $REBUILD_PACKAGES == "true"
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE == 'push'
@@ -450,22 +403,85 @@ build_packages:
         - packages_id.txt
         - website/**/*
     - when: manual
-  allow_failure: true
+
+# =============================================================================
+# BUILD STAGE
+# =============================================================================
+
+trigger-builds:
+  stage: build
+  needs: ["generate-build-jobs"]
+  trigger:
+    include:
+      - artifact: generated-jobs.yml
+        job: generate-build-jobs
+    strategy: depend
+  rules:
+    - if: $REBUILD_PACKAGES == "true"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE == 'push'
+      changes:
+        - packages_id.txt
+        - website/**/*
+    - when: manual
+
+# =============================================================================
+# PACKAGE STAGE
+# =============================================================================
+
+package_repository:
+  stage: package
+  needs: ["trigger-builds"]
+  before_script:
+    - *install_dependencies
+  script:
+    - *error_handling
+    - |
+      REPO_ARCH_DIR="${REPO_DIR}/x86_64"
+      echo "Ensuring repository directory exists..."
+      mkdir -p "${REPO_ARCH_DIR}"
+
+      echo "Listing collected packages:"
+      ls -laR "${REPO_ARCH_DIR}"
+
+      echo "Updating repository database..."
+      (
+        cd "${REPO_ARCH_DIR}"
+        
+        rm -f ${REPO_NAME}.db* ${REPO_NAME}.files*
+        
+        if ls ./*.pkg.tar.zst 1> /dev/null 2>&1; then
+          echo "Found packages. Rebuilding repository database..."
+          repo-add "${REPO_NAME}.db.tar.gz" *.pkg.tar.zst
+          
+          ln -sf "${REPO_NAME}.db.tar.gz" "${REPO_NAME}.db"
+          ln -sf "${REPO_NAME}.files.tar.gz" "${REPO_NAME}.files"
+        else
+          echo "No packages found in repository. Creating empty database..."
+          tar -czf "${REPO_NAME}.db.tar.gz" -T /dev/null
+          tar -czf "${REPO_NAME}.files.tar.gz" -T /dev/null
+          ln -sf "${REPO_NAME}.db.tar.gz" "${REPO_NAME}.db"
+          ln -sf "${REPO_NAME}.files.tar.gz" "${REPO_NAME}.files"
+        fi
+      )
   artifacts:
     paths:
       - "${REPO_DIR}/x86_64/"
     expire_in: 1 day
-    reports:
-      junit: "build_report.xml"
+  rules:
+    - if: $REBUILD_PACKAGES == "true"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE == 'push'
+      changes:
+        - packages_id.txt
+        - website/**/*
+    - when: manual
 
 # =============================================================================
 # TEST STAGE
 # =============================================================================
 
-# New test job to validate built packages
 test_packages:
   stage: test
-  needs: ["build_packages"]
+  needs: ["package_repository"]
   before_script:
     - *install_dependencies
   script:
@@ -475,13 +491,11 @@ test_packages:
 
       echo "Testing repository integrity..."
 
-      # Check if database files exist
       if [ ! -f "${REPO_ARCH_DIR}/${REPO_NAME}.db" ]; then
         echo "ERROR: Repository database not found!"
         exit 1
       fi
 
-      # Validate package files
       echo "Validating package files..."
       package_count=0
       for pkg_file in "${REPO_ARCH_DIR}"/*.pkg.tar.zst; do
@@ -511,7 +525,7 @@ test_packages:
 
 pages:
   stage: deploy
-  needs: ["build_packages", "test_packages"]
+  needs: ["package_repository", "test_packages"]
   before_script:
     - *install_dependencies
     - echo "Installing Bun..."
@@ -525,26 +539,19 @@ pages:
       echo "Ensuring required directories exist..."
       mkdir -p "${REPO_DIR}/api"
 
-      # Clean up existing Vue app files
       echo "Cleaning up existing Vue app files..."
       rm -f "${REPO_DIR}/index.html" || true
       rm -rf "${REPO_DIR}/assets" || true
 
-      # Function to generate package metadata
       generate_package_metadata() {
         echo "Generating package metadata for web interface..."
-        
-        # Create a temporary file for JSON objects
         temp_json=$(mktemp)
         
         for pkg_file in "${REPO_ARCH_DIR}"/*.pkg.tar.zst; do
           [ -f "$pkg_file" ] || continue
-          
-          # Extract package information
           pkg_info=$(pacman -Qip "$pkg_file" 2>/dev/null || echo "")
           
           if [ -n "$pkg_info" ]; then
-            # Parse package information more reliably
             name=$(echo "$pkg_info" | grep -m1 "^Name" | sed 's/Name[[:space:]]*:[[:space:]]*//' || echo 'unknown')
             version=$(echo "$pkg_info" | grep -m1 "^Version" | sed 's/Version[[:space:]]*:[[:space:]]*//' || echo 'unknown')
             desc=$(echo "$pkg_info" | grep -m1 "^Description" | sed 's/Description[[:space:]]*:[[:space:]]*//' || echo 'No description')
@@ -555,53 +562,36 @@ pages:
             depends=$(echo "$pkg_info" | grep -m1 "^Depends On" | sed 's/Depends On[[:space:]]*:[[:space:]]*//' || echo 'None')
             groups=$(echo "$pkg_info" | grep -m1 "^Groups" | sed 's/Groups[[:space:]]*:[[:space:]]*//' || echo 'None')
             
-            # Create JSON object
             jq -cn \
-              --arg name "$name" \
-              --arg version "$version" \
-              --arg desc "$desc" \
-              --arg arch "$arch" \
-              --arg filename "$filename" \
-              --arg size "$size" \
-              --arg modified "$modified" \
-              --arg depends "$depends" \
-              --arg groups "$groups" \
+              --arg name "$name" --arg version "$version" --arg desc "$desc" --arg arch "$arch" \
+              --arg filename "$filename" --arg size "$size" --arg modified "$modified" \
+              --arg depends "$depends" --arg groups "$groups" \
               '{name: $name, version: $version, description: $desc, architecture: $arch, filename: $filename, size: $size, modified: $modified, depends: $depends, groups: $groups}' >> "$temp_json"
           fi
         done
         
-        # Combine all JSON objects into an array
         if [ -s "$temp_json" ]; then
           jq -s . "$temp_json" > "${REPO_DIR}/api/packages.json"
         else
           echo "[]" > "${REPO_DIR}/api/packages.json"
         fi
-        
         rm -f "$temp_json"
       }
 
-      # Build Vue frontend
       build_frontend() {
         echo "Building Vue frontend with Bun..."
         if [ -d "website" ]; then
           (
             cd website
-            
-            # Install dependencies with cache
             echo "Installing frontend dependencies..."
             bun install --frozen-lockfile
-            
-            # Build the application
             echo "Building Vue application..."
             bun run build
-            
-            # Verify build output
             if [ ! -d "dist" ]; then
               echo "ERROR: Build failed - dist directory not found"
               exit 1
             fi
           )
-          
           echo "Copying built Vue app to public directory..."
           cp -r website/dist/. "${REPO_DIR}/"
         else
@@ -609,11 +599,9 @@ pages:
         fi
       }
 
-      # Main execution
       generate_package_metadata
       build_frontend
 
-      # Generate repository statistics
       echo "Generating repository statistics..."
       repo_stats=$(cat << EOF
       {
@@ -623,11 +611,10 @@ pages:
         "cache_size": "$(du -sh "${CACHE_DIR}" 2>/dev/null | awk '{print $1}' || echo '0')",
         "cached_packages": $(ls -1 "${CACHE_DIR}"/*.pkg.tar.zst 2>/dev/null | wc -l || echo 0)
       }
-      EOF
+EOF
       )
       echo "$repo_stats" > "${REPO_DIR}/api/stats.json"
 
-      # Final verification
       echo "Final verification before deployment..."
       echo "Repository packages: $(ls -1 ${REPO_ARCH_DIR}/*.pkg.tar.zst 2>/dev/null | wc -l || echo '0')"
       echo "Public directory structure:"
@@ -657,11 +644,9 @@ cleanup_old_artifacts:
     - *error_handling
     - |
       echo "Cleaning up old artifacts (older than 7 days)..."
-
       CUTOFF_DATE=$(date -d '7 days ago' --iso-8601)
       echo "Cutoff date: $CUTOFF_DATE"
 
-      # Function to clean job artifacts
       cleanup_job_artifacts() {
         echo "Fetching jobs list..."
         local jobs_response
@@ -670,15 +655,12 @@ cleanup_old_artifacts:
         
         if echo "$jobs_response" | jq -e . >/dev/null 2>&1; then
           echo "Jobs response is valid JSON"
-          
           local jobs
           jobs=$(echo "$jobs_response" | jq -r '.[] | select(.finished_at != null and .finished_at < "'$CUTOFF_DATE'") | .id' 2>/dev/null || echo "")
           
           if [ -n "$jobs" ]; then
             echo "Found jobs with old artifacts to clean up:"
             echo "$jobs"
-            
-            # Clean up jobs in parallel
             for job_id in $jobs; do
               echo "  -> Cleaning artifacts for job $job_id"
               curl --request DELETE \
@@ -694,7 +676,6 @@ cleanup_old_artifacts:
         fi
       }
 
-      # Function to clean pipeline artifacts
       cleanup_pipeline_artifacts() {
         echo "Cleaning up old pipeline artifacts..."
         local pipelines_response
@@ -703,14 +684,12 @@ cleanup_old_artifacts:
         
         if echo "$pipelines_response" | jq -e . >/dev/null 2>&1; then
           echo "Pipelines response is valid JSON"
-          
           local pipelines
           pipelines=$(echo "$pipelines_response" | jq -r '.[] | select(.finished_at != null and .finished_at < "'$CUTOFF_DATE'") | .id' 2>/dev/null || echo "")
           
           if [ -n "$pipelines" ]; then
             echo "Found pipelines with old artifacts to clean up:"
             echo "$pipelines"
-            
             for pipeline_id in $pipelines; do
               echo "  -> Cleaning artifacts for pipeline $pipeline_id"
               curl --request DELETE \
@@ -726,10 +705,8 @@ cleanup_old_artifacts:
         fi
       }
 
-      # Execute cleanup functions
       cleanup_job_artifacts
       cleanup_pipeline_artifacts
-
       echo "Cleanup completed successfully"
   rules:
     - if: $CI_PIPELINE_SOURCE == 'schedule'
