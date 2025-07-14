@@ -1,4 +1,3 @@
-# Use a base image with the necessary tools
 image: archlinux:latest
 
 stages:
@@ -7,7 +6,7 @@ stages:
   - deploy
 
 variables:
-  CONTAINER_IMAGE_TAG: ${CI_REGISTRY_IMAGE}/repository:latest
+  CONTAINER_IMAGE_TAG: ${CI_REGISTRY_IMAGE}:latest
 
   REPO_NAME: "prismlinux"
   ARCH: "x86_64"
@@ -71,6 +70,7 @@ build_repository:
     - |
       podman run --rm \
         --name ${CONTAINER_NAME} \
+        --cgroup-mode=disabled \ 
         --cgroup-manager cgroupfs \
         --security-opt label=disable \
         --systemd=false \
