@@ -132,7 +132,7 @@ defined by comments/headers and removes duplicates within those sections,
 while preserving the leading whitespace (indentation) of package lines.
 
 Arguments:
-    FILE_PATH    Path to the package list file (default: packages.txt)
+    FILE_PATH    Path to the package list file (default: packages_id.txt)
 
 Options:
     -h, --help   Show this help message
@@ -148,9 +148,9 @@ main() {
     # Construct the default file path relative to the script's location
     local file_path
     if [[ "$script_dir" == "." ]]; then
-        file_path="packages.txt"
+        file_path="packages_id.txt"
     else
-        file_path="packages.txt"
+        file_path="packages_id.txt"
     fi
 
     # Parse command line arguments
