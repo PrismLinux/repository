@@ -1,4 +1,4 @@
-image: quay.io/podman/stable:latest
+image: archlinux:latest
 
 variables:
   REPO_NAME: "prismlinux"
@@ -9,11 +9,13 @@ variables:
   REMOTE_PACKAGES_FILE: "remote_packages.json"
   REBUILD_TRIGGER_FILE: "rebuild_packages.txt"
   PACKAGES_CONFIG: "packages.txt"
-  # Podman-specific settings
   STORAGE_DRIVER: "overlay"
   PODMAN_SYSTEMD_UNIT: "podman.socket"
 
 before_script:
+  # Update system and install dependencies
+  - pacman -Syu --noconfirm
+  - pacman -S --noconfirm podman podman-docker podman-compose python python-pip
   - podman info
   - podman-compose version
   # Start Podman socket for rootless operation
@@ -76,9 +78,9 @@ build_repository:
       artifacts: true
   script:
     - if [ "$(cat public/rebuild_needed.txt)" = "true" ] || [ "$FORCE_REBUILD" = "true" ]; then
-        podman-compose -f compose.yml up --build --exit-code-from repo_builder;
+      podman-compose -f compose.yml up --build --exit-code-from repo_builder;
       else
-        echo "No rebuild needed, skipping build stage.";
+      echo "No rebuild needed, skipping build stage.";
       fi
   artifacts:
     paths:
