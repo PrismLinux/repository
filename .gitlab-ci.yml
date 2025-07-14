@@ -70,7 +70,7 @@ build_repository:
     - |
       podman run --rm \
         --name ${CONTAINER_NAME} \
-        --cgroup-mode=disabled \ 
+        --pids-limit=-1 \
         --cgroup-manager cgroupfs \
         --security-opt label=disable \
         --systemd=false \
