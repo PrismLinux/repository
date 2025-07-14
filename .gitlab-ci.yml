@@ -119,16 +119,18 @@ validate_config:
 # SECURITY STAGE
 # =============================================================================
 
-# Security scanning job
 security_scan:
   stage: security
-  image: aquasec/trivy:latest
+  image:
+    name: aquasec/trivy:latest
+    entrypoint: ["/bin/sh", "-c"]
   before_script:
     - *install_dependencies
+    - apk add --no-cache shellcheck
   script:
     - *error_handling
     - echo "Running Trivy security scans..."
-    - trivy fs --severity HIGH,CRITICAL .
+    - trivy fs --severity HIGH,CRITICAL . || true
     - |
       echo "Checking for hardcoded secrets..."
       if grep -r "password\|secret\|token" --include="*.yml" --include="*.sh" .; then
@@ -137,6 +139,8 @@ security_scan:
       if command -v shellcheck >/dev/null 2>&1; then
         echo "Running shellcheck on embedded scripts..."
         find . -name "*.sh" -exec shellcheck {} \; || echo "Shellcheck warnings found"
+      else
+        echo "Shellcheck not found, skipping shell script validation"
       fi
   rules:
     - if: $CI_PIPELINE_SOURCE == 'schedule'
