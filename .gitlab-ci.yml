@@ -385,13 +385,28 @@ deploy_website:
 
       # Generate stats API
       echo "Generating API file: stats.json"
+      
+      # Get package count safely
+      if [ -d "${REPO_ARCH_DIR}" ]; then
+        PACKAGE_COUNT=$(ls -1 "${REPO_ARCH_DIR}"/*.pkg.tar.zst 2>/dev/null | wc -l || echo 0)
+      else
+        PACKAGE_COUNT=0
+      fi
+      
+      # Get repository size safely
+      if [ -d "${REPO_ARCH_DIR}" ]; then
+        REPO_SIZE=$(du -sh "${REPO_ARCH_DIR}" 2>/dev/null | awk '{print $1}' || echo '0B')
+      else
+        REPO_SIZE="0B"
+      fi
+      
       jq -n \
-        --argjson total_packages "$(ls -1 "${REPO_ARCH_DIR}"/*.pkg.tar.zst 2>/dev/null | wc -l || echo 0)" \
-        --arg repository_size "$(du -sh "${REPO_ARCH_DIR}" 2>/dev/null | awk '{print $1}' || echo '0B')" \
+        --arg total_packages "${PACKAGE_COUNT}" \
+        --arg repository_size "${REPO_SIZE}" \
         --arg last_updated "$(date --iso-8601=seconds)" \
         --arg arch "${ARCH}" \
         --arg repo_name "${REPO_NAME}" \
-        '{total_packages: $total_packages, repository_size: $repository_size, last_updated: $last_updated, architecture: $arch, repository_name: $repo_name}' > "${API_DIR}/stats.json"
+        '{total_packages: ($total_packages | tonumber), repository_size: $repository_size, last_updated: $last_updated, architecture: $arch, repository_name: $repo_name}' > "${API_DIR}/stats.json"
         
       # Build custom website if available
       if [ -d "website" ]; then
