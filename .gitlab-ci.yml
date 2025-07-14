@@ -448,6 +448,7 @@ build_packages:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE == 'push'
       changes:
         - packages_id.txt
+        - website/**/*
     - when: manual
   allow_failure: true
   artifacts:
@@ -500,6 +501,7 @@ test_packages:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE == 'push'
       changes:
         - packages_id.txt
+        - website/**/*
     - when: manual
   allow_failure: false
 
@@ -633,6 +635,9 @@ pages:
   rules:
     - if: $REBUILD_PACKAGES == "true"
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE == 'push'
+      changes:
+        - packages_id.txt
+        - website/**/*
   artifacts:
     paths:
       - public
@@ -752,3 +757,6 @@ notify_deployment:
   rules:
     - if: $REBUILD_PACKAGES == "true"
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE == 'push'
+      changes:
+        - packages_id.txt
+        - website/**/*
