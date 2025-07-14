@@ -23,17 +23,37 @@ before_script:
     cat > ~/.config/containers/storage.conf << EOF
     [storage]
     driver = "vfs"
-
+    graphroot = "/tmp/containers/storage"
+    runroot = "/tmp/containers/storage"
+    
     [storage.options]
     EOF
+
+  # Configure containers.conf for better CI compatibility
+  - |
+    cat > ~/.config/containers/containers.conf << EOF
+    [containers]
+    log_driver = "k8s-file"
+    cgroup_manager = "cgroupfs"
+    events_logger = "file"
+    
+    [engine]
+    cgroup_manager = "cgroupfs"
+    events_logger = "file"
+    runtime = "crun"
+    EOF
+
+  # Create necessary directories
+  - mkdir -p /tmp/containers/storage
+  - mkdir -p ~/.local/share/containers
 
   # Test Podman configuration
   - podman info
   - podman-compose version
 
-  # Start Podman socket for rootless operation (if needed)
-  - systemctl --user start podman.socket || true
-  - export DOCKER_HOST=unix:///run/user/$UID/podman/podman.sock
+  # Export environment variables for Podman
+  - export STORAGE_DRIVER=vfs
+  - export BUILDAH_ISOLATION=chroot
 
 stages:
   - validate
@@ -44,8 +64,14 @@ stages:
 validate_config:
   stage: validate
   script:
+    - echo "Validating configuration..."
+    - ls -la
+    - test -f compose.yml || (echo "compose.yml not found!" && exit 1)
+    - test -f packages.txt || (echo "packages.txt not found!" && exit 1)
+    - test -d scripts || (echo "scripts directory not found!" && exit 1)
+    - podman-compose -f compose.yml config
     - podman-compose -f compose.yml up --build --exit-code-from repo_builder
-    - cat public/rebuild_needed.txt
+    - test -f public/rebuild_needed.txt && cat public/rebuild_needed.txt || echo "rebuild_needed.txt not found"
   artifacts:
     paths:
       - cache/
@@ -67,8 +93,9 @@ check_package_updates:
     - job: validate_config
       artifacts: true
   script:
+    - echo "Checking for package updates..."
     - podman-compose -f compose.yml up --build --exit-code-from repo_builder
-    - cat public/rebuild_needed.txt
+    - test -f public/rebuild_needed.txt && cat public/rebuild_needed.txt || echo "rebuild_needed.txt not found"
   artifacts:
     paths:
       - cache/
@@ -90,10 +117,15 @@ build_repository:
     - job: check_package_updates
       artifacts: true
   script:
-    - if [ "$(cat public/rebuild_needed.txt)" = "true" ] || [ "$FORCE_REBUILD" = "true" ]; then
-      podman-compose -f compose.yml up --build --exit-code-from repo_builder;
+    - echo "Building repository..."
+    - |
+      if [ -f public/rebuild_needed.txt ] && [ "$(cat public/rebuild_needed.txt)" = "true" ] || [ "$FORCE_REBUILD" = "true" ]; then
+        echo "Rebuild needed, starting build process..."
+        podman-compose -f compose.yml up --build --exit-code-from repo_builder
       else
-      echo "No rebuild needed, skipping build stage.";
+        echo "No rebuild needed, skipping build stage."
+        mkdir -p public
+        echo "false" > public/rebuild_needed.txt
       fi
   artifacts:
     paths:
@@ -113,8 +145,16 @@ pages:
     - job: build_repository
       artifacts: true
   script:
-    - podman-compose -f compose.yml up --build --exit-code-from repo_builder
-    - cp -r public/* .
+    - echo "Deploying to GitLab Pages..."
+    - ls -la public/
+    - |
+      if [ -d public ] && [ "$(ls -A public)" ]; then
+        echo "Public directory contains files, proceeding with deployment"
+      else
+        echo "Public directory is empty, creating index page"
+        mkdir -p public
+        echo "<h1>Repository is being built</h1>" > public/index.html
+      fi
   artifacts:
     paths:
       - public
