@@ -54,8 +54,6 @@ stages:
   - deploy
   - cleanup
 
-include:
-  - template: Security/SAST.gitlab-ci.yml
 # =============================================================================
 # YAML Anchors for DRY principle
 # =============================================================================
@@ -124,23 +122,20 @@ validate_config:
 # Security scanning job
 security_scan:
   stage: security
-  image: registry.gitlab.com/security-products/sast:latest
+  image: aquasec/trivy:latest
   before_script:
     - *install_dependencies
   script:
     - *error_handling
-    - echo "Running security scans..."
+    - echo "Running Trivy security scans..."
+    - trivy fs --severity HIGH,CRITICAL .
     - |
-      # Check for potential security issues in scripts
       echo "Checking for hardcoded secrets..."
       if grep -r "password\|secret\|token" --include="*.yml" --include="*.sh" .; then
         echo "WARNING: Potential hardcoded secrets found. Please use GitLab CI/CD variables."
       fi
-
-      # Validate shell scripts for security issues
       if command -v shellcheck >/dev/null 2>&1; then
         echo "Running shellcheck on embedded scripts..."
-        # Extract shell scripts from YAML and check them
         find . -name "*.sh" -exec shellcheck {} \; || echo "Shellcheck warnings found"
       fi
   rules:
