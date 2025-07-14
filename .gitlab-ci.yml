@@ -136,6 +136,7 @@ check_packages:
         mv "$temp_checksums" "${CHECKSUMS_FILE}"
       else
         echo "No package changes detected."
+        rm -f "${REBUILD_TRIGGER_FILE}"
       fi
   artifacts:
     paths:
@@ -181,20 +182,20 @@ build_repository:
       cd "${REPO_ARCH_DIR}"
       rm -f ${REPO_NAME}.db* ${REPO_NAME}.files*
       if [ $package_count -gt 0 ]; then
-        repo-add "${REPO_NAME}.db.tar.gz" *.pkg.tar.zst
+        repo-add --nocolor --nosign --verify "${REPO_NAME}.db.tar.gz" *.pkg.tar.zst
         ln -sf "${REPO_NAME}.db.tar.gz" "${REPO_NAME}.db"
         ln -sf "${REPO_NAME}.files.tar.gz" "${REPO_NAME}.files"
-        echo "packages_found=true" > package_status.txt
+        echo "packages_found=true" > ../../package_status.txt
       else
         tar -czf "${REPO_NAME}.db.tar.gz" -T /dev/null
         tar -czf "${REPO_NAME}.files.tar.gz" -T /dev/null
         ln -sf "${REPO_NAME}.db.tar.gz" "${REPO_NAME}.db"
         ln -sf "${REPO_NAME}.files.tar.gz" "${REPO_NAME}.files"
-        echo "packages_found=false" > package_status.txt
+        echo "packages_found=false" > ../../package_status.txt
       fi
   artifacts:
     paths:
-      - "${REPO_DIR}/x86_64/"
+      - "${REPO_DIR}/"
       - package_status.txt
     expire_in: 1 day
   rules:
@@ -215,6 +216,10 @@ test_packages:
       if [ ! -f "${REPO_ARCH_DIR}/${REPO_NAME}.db" ]; then
         echo "ERROR: Repository database not found!"
         exit 1
+      fi
+      if ! ls "${REPO_ARCH_DIR}"/*.pkg.tar.zst 1> /dev/null 2>&1; then
+        echo "No packages found to test. Skipping."
+        exit 0
       fi
       for pkg_file in "${REPO_ARCH_DIR}"/*.pkg.tar.zst; do
         if [ -f "$pkg_file" ]; then
@@ -242,18 +247,66 @@ generate_dynamic_pipeline:
         pages:
           stage: deploy
           image: archlinux:base-devel
-          before_script:
-            - pacman -Syu --noconfirm --needed curl jq base-devel git unzip
-            - curl -fsSL https://bun.sh/install | bash
-            - export PATH="$HOME/.bun/bin:$PATH"
           script:
             - set -euo pipefail
             - trap 'echo "Error at line $LINENO. Exit code: $?" >&2' ERR
             - |
-              REPO_ARCH_DIR="${REPO_DIR}/x86_64"
-              mkdir -p "${REPO_DIR}/api"
-              temp_json=$(mktemp)
+              REPO_ARCH_DIR="public/x86_64"
+              API_DIR="public/api"
+              mkdir -p "${API_DIR}"
+              temp_json_objects=$(mktemp)
+
+              echo "Generating package information JSON..."
+
               for pkg_file in "${REPO_ARCH_DIR}"/*.pkg.tar.zst; do
                 [ -f "$pkg_file" ] || continue
+                
                 pkg_info=$(pacman -Qip "$pkg_file" 2>/dev/null || echo "")
+                
                 if [ -n "$pkg_info" ]; then
+                  pkg_name=$(echo "$pkg_info"    | grep -oP '^Name\s+:\s+\K.*')
+                  pkg_version=$(echo "$pkg_info" | grep -oP '^Version\s+:\s+\K.*')
+                  pkg_desc=$(echo "$pkg_info"    | grep -oP '^Description\s+:\s+\K.*')
+                  pkg_arch=$(echo "$pkg_info"    | grep -oP '^Architecture\s+:\s+\K.*')
+                  pkg_size=$(echo "$pkg_info"    | grep -oP '^Installed Size\s+:\s+\K.*')
+                  
+                  jq -n --arg name "$pkg_name" \
+                        --arg version "$pkg_version" \
+                        --arg desc "$pkg_desc" \
+                        --arg arch "$pkg_arch" \
+                        --arg size "$pkg_size" \
+                        --arg file "$(basename "$pkg_file")" \
+                        '{name: $name, version: $version, description: $desc, architecture: $arch, installed_size: $size, filename: $file}' >> "$temp_json_objects"
+                fi
+              done
+
+              jq -s . "$temp_json_objects" > "${API_DIR}/packages.json"
+              rm "$temp_json_objects"
+
+              echo "API file 'packages.json' created successfully."
+              echo "GitLab Pages content is ready in the 'public' directory."
+          artifacts:
+            paths:
+              - public
+          rules:
+            - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      EOF
+      else
+        echo "No packages found, skipping dynamic pipeline generation."
+        touch "${DYNAMIC_PIPELINE_FILE}"
+      fi
+  artifacts:
+    paths:
+      - "${DYNAMIC_PIPELINE_FILE}"
+
+trigger_pages_deploy:
+  stage: deploy
+  trigger:
+    include:
+      - artifact: "dynamic_pipeline.yml"
+        job: generate_dynamic_pipeline
+    strategy: depend
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      exists:
+        - "${DYNAMIC_PIPELINE_FILE}"
