@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  repo_builder:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ./cache:/app/cache
+      - ./public:/app/public
+      - ./scripts:/app/scripts
+      - ./packages.txt:/app/packages.txt
+      - ./website:/app/website  # необов’язково, якщо є кастомний фронтенд
+    environment:
+      - GITLAB_TOKEN=${GITLAB_TOKEN}
+      - FORCE_REBUILD=${FORCE_REBUILD}
+    command: /app/scripts/run.sh

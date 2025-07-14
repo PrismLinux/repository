@@ -1,12 +1,4 @@
-default:
-  image: archlinux:latest
-  before_script:
-    - pacman -Syu --noconfirm
-    - pacman -S --noconfirm curl jq base-devel git unzip rsync
-
-# ==============================================================================
-# GLOBAL VARIABLES
-# ==============================================================================
+image: quay.io/podman/stable:latest
 
 variables:
   REPO_NAME: "prismlinux"
@@ -17,22 +9,16 @@ variables:
   REMOTE_PACKAGES_FILE: "remote_packages.json"
   REBUILD_TRIGGER_FILE: "rebuild_packages.txt"
   PACKAGES_CONFIG: "packages.txt"
+  # Podman-specific settings
+  STORAGE_DRIVER: "overlay"
+  PODMAN_SYSTEMD_UNIT: "podman.socket"
 
-# ==============================================================================
-# WORKFLOW RULES
-# ==============================================================================
-
-workflow:
-  rules:
-    - if: $CI_PIPELINE_SOURCE == 'schedule'
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-    - if: $CI_PIPELINE_SOURCE == 'merge_request_event'
-    - if: $CI_PIPELINE_SOURCE == 'web'
-    - if: $FORCE_REBUILD == "true"
-
-# ==============================================================================
-# PIPELINE STAGES
-# ==============================================================================
+before_script:
+  - podman info
+  - podman-compose version
+  # Start Podman socket for rootless operation
+  - systemctl --user start podman.socket
+  - export DOCKER_HOST=unix:///run/user/$UID/podman/podman.sock
 
 stages:
   - validate
@@ -40,175 +26,48 @@ stages:
   - build
   - deploy
 
-# ==============================================================================
-# CACHE CONFIGURATION
-# ==============================================================================
-
-cache:
-  key: "repo-cache-${CI_COMMIT_REF_SLUG}"
-  paths:
-    - "${CACHE_DIR}/"
-    - "${CHECKSUMS_FILE}"
-    - "${REBUILD_TRIGGER_FILE}"
-    - "${REMOTE_PACKAGES_FILE}"
-  policy: pull-push
-
-# ==============================================================================
-# STAGE: VALIDATE
-# ==============================================================================
-
 validate_config:
   stage: validate
   script:
-    - |
-      echo "Validating configuration..."
-
-      if [ ! -f "${PACKAGES_CONFIG}" ]; then
-        echo "ERROR: Package configuration file '${PACKAGES_CONFIG}' not found!"
-        exit 1
-      fi
-
-      if [ -z "$GITLAB_TOKEN" ]; then
-        echo "ERROR: CI/CD variable 'GITLAB_TOKEN' is not set! It's required to read project releases."
-        exit 1
-      fi
-
-      echo "Checking '${PACKAGES_CONFIG}' format..."
-      while IFS= read -r line || [[ -n "$line" ]]; do
-        if [[ "$line" =~ ^[[:space:]]*# ]] || [[ -z "$line" ]]; then
-          continue
-        fi
-        
-        project_id=$(echo "$line" | awk '{print $1}')
-        if ! [[ "$project_id" =~ ^[0-9]+$ ]]; then
-          echo "ERROR: Invalid format in '${PACKAGES_CONFIG}'. Line should contain a numeric Project ID: '$line'"
-          exit 1
-        fi
-        echo "  ✓ Valid Project ID: $project_id"
-      done < "${PACKAGES_CONFIG}"
-
-      echo "Configuration validation passed!"
-
-# ==============================================================================
-# STAGE: CHECK
-# ==============================================================================
+    - podman-compose -f compose.yml up --build --exit-code-from repo_builder
+    - cat public/rebuild_needed.txt
+  artifacts:
+    paths:
+      - cache/
+      - public/
+      - remote_packages.json
+      - rebuild_packages.txt
+      - package_checksums.txt
+    expire_in: 1 hour
+  rules:
+    - if: $CI_PIPELINE_SOURCE == 'schedule'
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_PIPELINE_SOURCE == 'merge_request_event'
+    - if: $CI_PIPELINE_SOURCE == 'web'
+    - if: $FORCE_REBUILD == "true"
 
 check_package_updates:
   stage: check
+  needs:
+    - job: validate_config
+      artifacts: true
   script:
-    - |
-      set -eo pipefail
-      echo "=== Checking for package updates ==="
-
-      mkdir -p "${CACHE_DIR}"
-
-      declare -A old_checksums
-      declare -A new_checksums
-
-      if [ -f "${CHECKSUMS_FILE}" ]; then
-        echo "Loading existing checksums from '${CHECKSUMS_FILE}'..."
-        while IFS='|' read -r filename checksum; do
-          [[ -n "$filename" && -n "$checksum" ]] && old_checksums["$filename"]="$checksum"
-        done < "${CHECKSUMS_FILE}"
-      else
-        echo "No existing checksums file found. All packages will be treated as new."
-      fi
-
-      PROJECT_IDS=$(grep -vE '^\s*#|^\s*$' "${PACKAGES_CONFIG}" | awk '{print $1}' | tr '\n' ' ')
-      echo "Processing Project IDs: ${PROJECT_IDS}"
-
-      remote_packages_json=""
-      temp_json_file=$(mktemp)
-
-      for project_id in ${PROJECT_IDS}; do
-        echo "Fetching releases for project ${project_id}..."
-        releases_url="https://gitlab.com/api/v4/projects/${project_id}/releases"
-        
-        latest_release=$(curl --silent --show-error --fail \
-          --header "PRIVATE-TOKEN: $GITLAB_TOKEN" \
-          "${releases_url}" | jq -r '.[0] // empty')
-        
-        if [ -z "$latest_release" ]; then
-          echo "  -> No releases found for project ${project_id}, skipping."
-          continue
-        fi
-        
-        echo "${latest_release}" | jq -c '.assets.links[]? | select(.name | endswith(".pkg.tar.zst")) | {(.name): .url}' >> "$temp_json_file"
-      done
-
-      if [ -s "$temp_json_file" ]; then
-        remote_packages_json=$(cat "$temp_json_file" | jq -s 'add')
-      else
-        remote_packages_json="{}"
-      fi
-
-      rm -f "$temp_json_file"
-
-      if [ -z "$remote_packages_json" ] || [ "$remote_packages_json" == "null" ]; then
-        echo "No remote packages found across all projects. Nothing to do."
-        echo "{}" > "${REMOTE_PACKAGES_FILE}"
-        echo "REBUILD_NEEDED=false" > build.env
-        exit 0
-      fi
-
-      echo "${remote_packages_json}" > "${REMOTE_PACKAGES_FILE}"
-      echo "Found a total of $(echo "$remote_packages_json" | jq 'length') remote packages."
-
-      echo "=== Verifying package checksums ==="
-      changed_packages=()
-      rebuild_needed=false
-
-      echo "$remote_packages_json" | jq -r 'to_entries[] | "\(.key)|\(.value)"' | while IFS='|' read -r pkg_filename download_url; do
-        echo "  Checking: ${pkg_filename}"
-        temp_file=$(mktemp)
-        
-        if ! curl --location --silent --show-error --fail \
-          --header "PRIVATE-TOKEN: $GITLAB_TOKEN" \
-          --output "$temp_file" "$download_url"; then
-          echo "    ✗ ERROR: Failed to download ${pkg_filename} for checksum verification. Skipping."
-          rm -f "$temp_file"
-          continue
-        fi
-        
-        checksum=$(sha256sum "$temp_file" | awk '{print $1}')
-        rm "$temp_file"
-        
-        echo "${pkg_filename}|${checksum}" >> "${CHECKSUMS_FILE}.new"
-        
-        if [[ ! -v old_checksums["$pkg_filename"] ]] || [[ "${old_checksums[$pkg_filename]}" != "$checksum" ]]; then
-          echo "    🔄 CHANGED (new checksum: ${checksum})"
-          echo "$pkg_filename" >> "${REBUILD_TRIGGER_FILE}"
-          rebuild_needed=true
-        else
-          echo "    ✓ Unchanged"
-        fi
-      done
-
-      if [ -f "${CHECKSUMS_FILE}.new" ]; then
-        mv "${CHECKSUMS_FILE}.new" "${CHECKSUMS_FILE}"
-      fi
-
-      if [ "$rebuild_needed" = true ] || [ "$FORCE_REBUILD" == "true" ]; then
-        echo "=== Rebuild needed. ==="
-        echo "REBUILD_NEEDED=true" > build.env
-      else
-        echo "=== No package changes detected. ==="
-        echo "REBUILD_NEEDED=false" > build.env
-        > "${REBUILD_TRIGGER_FILE}"
-      fi
-
+    - podman-compose -f compose.yml up --build --exit-code-from repo_builder
+    - cat public/rebuild_needed.txt
   artifacts:
-    reports:
-      dotenv: build.env
     paths:
-      - "${REBUILD_TRIGGER_FILE}"
-      - "${CHECKSUMS_FILE}"
-      - "${REMOTE_PACKAGES_FILE}"
+      - cache/
+      - public/
+      - remote_packages.json
+      - rebuild_packages.txt
+      - package_checksums.txt
     expire_in: 1 hour
-
-# ==============================================================================
-# STAGE: BUILD
-# ==============================================================================
+  rules:
+    - if: $CI_PIPELINE_SOURCE == 'schedule'
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_PIPELINE_SOURCE == 'merge_request_event'
+    - if: $CI_PIPELINE_SOURCE == 'web'
+    - if: $FORCE_REBUILD == "true"
 
 build_repository:
   stage: build
@@ -216,236 +75,35 @@ build_repository:
     - job: check_package_updates
       artifacts: true
   script:
-    - |
-      set -eo pipefail
-      echo "=== Building Repository ==="
-
-      if [ ! -f "${REMOTE_PACKAGES_FILE}" ]; then
-          echo "ERROR: Remote packages file '${REMOTE_PACKAGES_FILE}' not found. Cannot proceed."
-          exit 1
-      fi
-
-      REPO_ARCH_DIR="${REPO_DIR}/${ARCH}"
-      mkdir -p "${REPO_ARCH_DIR}" "${CACHE_DIR}"
-
-      declare -A packages_to_rebuild
-      if [ -f "${REBUILD_TRIGGER_FILE}" ]; then
-        while IFS= read -r pkg_filename; do
-          [[ -n "$pkg_filename" ]] && packages_to_rebuild["$pkg_filename"]=1
-        done < "${REBUILD_TRIGGER_FILE}"
-      fi
-
-      echo "Reading package list from '${REMOTE_PACKAGES_FILE}'..."
-      successful_downloads=0
-      failed_downloads=0
-
-      jq -r 'to_entries[] | "\(.key)|\(.value)"' "${REMOTE_PACKAGES_FILE}" | while IFS='|' read -r pkg_filename download_url; do
-        cached_file="${CACHE_DIR}/${pkg_filename}"
-        repo_file="${REPO_ARCH_DIR}/${pkg_filename}"
-        
-        if [[ -v packages_to_rebuild["$pkg_filename"] ]] || [ "$FORCE_REBUILD" == "true" ] || [ ! -f "$cached_file" ]; then
-          if [[ ! -f "$cached_file" ]]; then
-            echo "  ⬇️ Downloading new/missing package: ${pkg_filename}"
-          else
-            echo "  🔄 Re-downloading changed package: ${pkg_filename}"
-          fi
-          
-          if curl --location --silent --show-error --fail \
-            --header "PRIVATE-TOKEN: $GITLAB_TOKEN" \
-            --output "$repo_file" "$download_url"; then
-            echo "    ✓ Downloaded successfully. Updating cache."
-            cp "$repo_file" "$cached_file"
-            successful_downloads=$((successful_downloads + 1))
-          else
-            echo "    ✗ ERROR: Failed to download ${pkg_filename}!"
-            failed_downloads=$((failed_downloads + 1))
-          fi
-        else
-          echo "  📋 Using cached version of: ${pkg_filename}"
-          cp "$cached_file" "$repo_file"
-        fi
-      done
-
-      echo "=== Cleaning up obsolete packages ==="
-      declare -A remote_packages_lookup
-      jq -r 'keys[]' "${REMOTE_PACKAGES_FILE}" | while IFS= read -r pkg_name; do
-        remote_packages_lookup["$pkg_name"]=1
-      done
-
-      for cached_file in "${CACHE_DIR}"/*.pkg.tar.zst; do
-        [ -f "$cached_file" ] || continue
-        cached_filename=$(basename "$cached_file")
-        if [[ ! -v remote_packages_lookup["$cached_filename"] ]]; then
-          echo "  🗑️ Removing obsolete cached package: ${cached_filename}"
-          rm "$cached_file"
-        fi
-      done
-
-      echo "=== Creating repository database in '${REPO_ARCH_DIR}' ==="
-      cd "${REPO_ARCH_DIR}"
-      rm -f "${REPO_NAME}".db* "${REPO_NAME}".files*
-
-      package_count=$(ls -1 ./*.pkg.tar.zst 2>/dev/null | wc -l)
-      if [ "$package_count" -gt 0 ]; then
-        echo "Building repository database with ${package_count} packages..."
-        repo-add "${REPO_NAME}.db.tar.gz" *.pkg.tar.zst
-        ln -sf "${REPO_NAME}.db.tar.gz" "${REPO_NAME}.db"
-        ln -sf "${REPO_NAME}.files.tar.gz" "${REPO_NAME}.files"
-        echo "✓ Repository database created successfully."
+    - if [ "$(cat public/rebuild_needed.txt)" = "true" ] || [ "$FORCE_REBUILD" = "true" ]; then
+        podman-compose -f compose.yml up --build --exit-code-from repo_builder;
       else
-        echo "⚠️ No packages found. Creating an empty repository database."
-        touch "${REPO_NAME}.db.tar.gz" "${REPO_NAME}.files.tar.gz"
-        ln -sf "${REPO_NAME}.db.tar.gz" "${REPO_NAME}.db"
-        ln -sf "${REPO_NAME}.files.tar.gz" "${REPO_NAME}.files"
+        echo "No rebuild needed, skipping build stage.";
       fi
-
-      echo "=== Build Summary ==="
-      echo "Successful downloads: $successful_downloads"
-      echo "Failed downloads: $failed_downloads"
-      echo "Total packages in repo: $package_count"
-
-      if [ $failed_downloads -gt 0 ]; then
-        echo "Build failed due to download errors."
-        exit 1
-      fi
-
   artifacts:
     paths:
-      - "${REPO_DIR}/"
+      - public/
+      - cache/
     expire_in: 1 week
   rules:
-    - if: $REBUILD_NEEDED == "true"
-    - if: $FORCE_REBUILD == "true"
-    - if: $CI_PIPELINE_SOURCE == 'web'
     - if: $CI_PIPELINE_SOURCE == 'schedule'
-
-# ==============================================================================
-# STAGE: DEPLOY
-# ==============================================================================
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_PIPELINE_SOURCE == 'merge_request_event'
+    - if: $CI_PIPELINE_SOURCE == 'web'
+    - if: $FORCE_REBUILD == "true"
 
 pages:
   stage: deploy
   needs:
     - job: build_repository
       artifacts: true
-      optional: false
-  before_script:
-    - pacman -Syu --noconfirm
-    - pacman -S --noconfirm curl jq unzip rsync
-    # Install Bun
-    - curl -fsSL https://bun.sh/install | bash
-    - export PATH="$HOME/.bun/bin:$PATH"
-    - bun --version
   script:
-    - |
-      set -eo pipefail
-      echo "=== Preparing Website for Deployment ==="
-
-      # ✅ Use 'public/' as the root folder for GitLab Pages
-      mkdir -p "public"
-
-      REPO_ARCH_DIR="public/${ARCH}"
-      API_DIR="public/api"
-      mkdir -p "${API_DIR}"
-
-      # Generate API files
-      echo "Generating API file: packages.json"
-      packages_json="[]"
-      if [ -d "${REPO_ARCH_DIR}" ] && [ -n "$(ls -A "${REPO_ARCH_DIR}"/*.pkg.tar.zst 2>/dev/null)" ]; then
-        temp_packages_file=$(mktemp)
-        for pkg_file in "${REPO_ARCH_DIR}"/*.pkg.tar.zst; do
-          [ -f "$pkg_file" ] || continue
-
-          pkg_info=$(pacman -Qip "$pkg_file" 2>/dev/null || echo "")
-          if [ -n "$pkg_info" ]; then
-            name=$(echo "$pkg_info" | grep -m1 "^Name" | sed 's/Name\s*:\s*//')
-            version=$(echo "$pkg_info" | grep -m1 "^Version" | sed 's/Version\s*:\s*//')
-            desc=$(echo "$pkg_info" | grep -m1 "^Description" | sed 's/Description\s*:\s*//')
-            arch=$(echo "$pkg_info" | grep -m1 "^Architecture" | sed 's/Architecture\s*:\s*//')
-            filename=$(basename "$pkg_file")
-            size=$(ls -lh "$pkg_file" | awk '{print $5}')
-            modified=$(date -r "$pkg_file" --iso-8601=seconds)
-            depends=$(echo "$pkg_info" | grep -m1 "^Depends On" | sed 's/Depends On\s*:\s*//' || echo "None")
-            url=$(echo "$pkg_info" | grep -m1 "^URL" | sed 's/URL\s*:\s*//' || echo "None")
-            license=$(echo "$pkg_info" | grep -m1 "^Licenses" | sed 's/Licenses\s*:\s*//' || echo "None")
-
-            jq -cn \
-              --arg name "$name" \
-              --arg version "$version" \
-              --arg desc "$desc" \
-              --arg arch "$arch" \
-              --arg filename "$filename" \
-              --arg size "$size" \
-              --arg modified "$modified" \
-              --arg depends "$depends" \
-              --arg url "$url" \
-              --arg license "$license" \
-              '{name: $name, version: $version, description: $desc, architecture: $arch, filename: $filename, size: $size, modified: $modified, depends: $depends, url: $url, license: $license}' >> "$temp_packages_file"
-          fi
-        done
-
-        if [ -s "$temp_packages_file" ]; then
-          packages_json=$(cat "$temp_packages_file" | jq -s .)
-        fi
-        rm -f "$temp_packages_file"
-      fi
-
-      echo "$packages_json" > "${API_DIR}/packages.json"
-
-      echo "Generating API file: stats.json"
-      if [ -d "${REPO_ARCH_DIR}" ]; then
-        PACKAGE_COUNT=$(ls -1 "${REPO_ARCH_DIR}"/*.pkg.tar.zst 2>/dev/null | wc -l || echo 0)
-        REPO_SIZE=$(du -sh "${REPO_ARCH_DIR}" 2>/dev/null | awk '{print $1}' || echo '0B')
-      else
-        PACKAGE_COUNT=0
-        REPO_SIZE="0B"
-      fi
-
-      jq -n \
-        --arg total_packages "${PACKAGE_COUNT}" \
-        --arg repository_size "${REPO_SIZE}" \
-        --arg last_updated "$(date --iso-8601=seconds)" \
-        --arg arch "${ARCH}" \
-        --arg repo_name "${REPO_NAME}" \
-        '{total_packages: ($total_packages | tonumber), repository_size: $repository_size, last_updated: $last_updated, architecture: $arch, repository_name: $repo_name}' > "${API_DIR}/stats.json"
-
-      # If there is a custom frontend, build it and copy to public/
-      if [ -d "website" ]; then
-        echo "Found 'website' directory. Building custom frontend..."
-        cd website
-
-        if [ -f "package.json" ]; then
-          echo "Installing dependencies and building with Bun..."
-          export PATH="$HOME/.bun/bin:$PATH"
-          bun install
-
-          if grep -q '"build"' package.json; then
-            bun run build
-          fi
-
-          echo "Copying build output to 'public/'..."
-          if [ -d "dist" ]; then
-            rsync -a "dist/" "../public/"
-          elif [ -d "build" ]; then
-            rsync -a "build/" "../public/"
-          elif [ -d "out" ]; then
-            rsync -a "out/" "../public/"
-          else
-            echo "Warning: No build output found!"
-          fi
-        fi
-        cd ..
-      else
-        echo "No custom 'website' directory. Generating a simple default index.html..."
-        echo "<!DOCTYPE html><html><body><h1>Default index</h1></body></html>" > public/index.html
-      fi
-
-      echo "=== Final public/ directory structure ==="
-      find public -type f
-
+    - podman-compose -f compose.yml up --build --exit-code-from repo_builder
+    - cp -r public/* .
   artifacts:
     paths:
       - public
+    expire_in: 1 month
   rules:
-    - if: $REBUILD_NEEDED == "true"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     - if: $FORCE_REBUILD == "true"
