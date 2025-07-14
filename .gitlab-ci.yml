@@ -9,17 +9,30 @@ variables:
   REMOTE_PACKAGES_FILE: "remote_packages.json"
   REBUILD_TRIGGER_FILE: "rebuild_packages.txt"
   PACKAGES_CONFIG: "packages.txt"
-  STORAGE_DRIVER: "overlay"
+  STORAGE_DRIVER: "vfs"
   PODMAN_SYSTEMD_UNIT: "podman.socket"
 
 before_script:
   # Update system and install dependencies
   - pacman -Syu --noconfirm
-  - pacman -S --noconfirm podman podman-docker podman-compose python python-pip
+  - pacman -S --noconfirm crun podman podman-docker podman-compose python python-pip fuse-overlayfs
+
+  # Configure Podman storage for CI environment
+  - mkdir -p ~/.config/containers
+  - |
+    cat > ~/.config/containers/storage.conf << EOF
+    [storage]
+    driver = "vfs"
+
+    [storage.options]
+    EOF
+
+  # Test Podman configuration
   - podman info
   - podman-compose version
-  # Start Podman socket for rootless operation
-  - systemctl --user start podman.socket
+
+  # Start Podman socket for rootless operation (if needed)
+  - systemctl --user start podman.socket || true
   - export DOCKER_HOST=unix:///run/user/$UID/podman/podman.sock
 
 stages:
