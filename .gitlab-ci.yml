@@ -15,7 +15,7 @@ variables:
 before_script:
   # Update system and install dependencies
   - pacman -Syu --noconfirm
-  - pacman -S --noconfirm crun podman podman-docker python python-pip fuse-overlayfs
+  - pacman -S --noconfirm crun podman python python-pip fuse-overlayfs
 
   # Configure Podman storage for CI environment
   - mkdir -p ~/.config/containers
@@ -29,18 +29,19 @@ before_script:
     [storage.options]
     EOF
 
-  # Configure containers.conf for better CI compatibility
+  # Configure containers.conf for CI compatibility - disable cgroup management
   - |
     cat > ~/.config/containers/containers.conf << EOF
     [containers]
     log_driver = "k8s-file"
-    cgroup_manager = "cgroupfs"
+    cgroup_manager = "disabled"
     events_logger = "file"
 
     [engine]
-    cgroup_manager = "cgroupfs"
+    cgroup_manager = "disabled"
     events_logger = "file"
     runtime = "crun"
+    conmon_path = ["/usr/bin/conmon"]
     EOF
 
   # Create necessary directories
@@ -78,10 +79,13 @@ validate_config:
     # Build the container image
     - podman build -t repo_builder:latest .
 
-    # Run the container directly
+    # Run the container directly with disabled cgroup management
     - |
       podman run --rm \
         --name ${CONTAINER_NAME} \
+        --security-opt label=disable \
+        --cgroup-manager disabled \
+        --systemd=false \
         -v $(pwd)/cache:/app/cache \
         -v $(pwd)/public:/app/public \
         -v $(pwd)/scripts:/app/scripts \
@@ -130,6 +134,9 @@ check_package_updates:
     - |
       podman run --rm \
         --name ${CONTAINER_NAME} \
+        --security-opt label=disable \
+        --cgroup-manager disabled \
+        --systemd=false \
         -v $(pwd)/cache:/app/cache \
         -v $(pwd)/public:/app/public \
         -v $(pwd)/scripts:/app/scripts \
@@ -180,6 +187,9 @@ build_repository:
         
         podman run --rm \
           --name ${CONTAINER_NAME} \
+          --security-opt label=disable \
+          --cgroup-manager disabled \
+          --systemd=false \
           -v $(pwd)/cache:/app/cache \
           -v $(pwd)/public:/app/public \
           -v $(pwd)/scripts:/app/scripts \
