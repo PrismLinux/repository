@@ -64,7 +64,7 @@ stages:
 .install_dependencies: &install_dependencies
   - echo "Installing dependencies..."
   - pacman -Syu --noconfirm --needed
-  - pacman -S --noconfirm --needed curl jq base-devel git unzip
+  - pacman -S --noconfirm --needed curl jq base-devel git unzip tr
 
 # Common error handling setup
 .error_handling: &error_handling
@@ -101,7 +101,7 @@ validate_config:
       fi
 
       # Validate package IDs format
-      if ! grep -vE '^\s*#|^\s*$' packages_id.txt | grep -qE '^[0-9]+'; then
+      if ! grep -vE '^\s*#|^\s*$' packages_id.txt | tr -d '\r' | grep -qE '^[0-9]+'; then
         echo "ERROR: packages_id.txt contains invalid project IDs"
         exit 1
       fi
@@ -240,7 +240,7 @@ check_packages:
       load_checksums
 
       # Get project IDs with better parsing
-      project_ids=$(grep -vE '^\s*#|^\s*$' packages_id.txt | awk '{print $1}')
+      project_ids=$(grep -vE '^\s*#|^\s*$' packages_id.txt | awk '{print $1}' | tr -d '\r')
       echo "Processing Project IDs: $project_ids"
 
       # Process each project in parallel where possible
@@ -312,19 +312,24 @@ generate-build-jobs:
     - |
       set -e
       echo "Generating dynamic build jobs..."
-      echo "# This file is dynamically generated in the 'generate-build-jobs' job" > generated-jobs.yml
+      # Use printf to avoid issues with echo and ensure no trailing newline
+      printf "%s" "# This file is dynamically generated in the 'generate-build-jobs' job" > generated-jobs.yml
 
       if [ ! -f "${REBUILD_TRIGGER_FILE}" ]; then
+        echo
         echo "No packages to rebuild. Skipping job generation."
         exit 0
       fi
 
+      echo
       echo "Re-generating all package build jobs due to detected changes."
 
-      grep -vE '^\s*#|^\s*$' packages_id.txt | awk '{print $1}' | while read -r project_id; do
+      # Pipe through `tr -d '\r'` to remove potential Windows-style line endings (carriage returns)
+      grep -vE '^\s*#|^\s*$' packages_id.txt | awk '{print $1}' | tr -d '\r' | while read -r project_id; do
       
       # Use printf for safer and more readable YAML generation
-      printf '\nbuild-package-%s:\n  stage: build\n  image: archlinux:base-devel\n  variables:\n    PACKAGE_PROJECT_ID: "%s"\n  before_script:\n    - ''echo "Installing dependencies..."''\n    - ''pacman -Syu --noconfirm --needed''\n    - ''pacman -S --noconfirm --needed curl jq base-devel git unzip''\n    - |\n      if [ -z "${GITLAB_TOKEN:-}" ]; then\n        echo "ERROR: GITLAB_TOKEN is not set"\n        exit 1\n      fi\n      export CURL_OPTS="--silent --show-error --fail --connect-timeout ${CURL_CONNECT_TIMEOUT} --max-time ${CURL_TIMEOUT}"\n  script:\n    - |\n      set -euo pipefail\n      trap ''\''echo "Error occurred at line $LINENO. Exit code: $?" >&2\''\'' ERR\n      \n      REPO_ARCH_DIR="${CI_PROJECT_DIR}/${REPO_DIR}/x86_64"\n      mkdir -p "${REPO_ARCH_DIR}"\n\n      echo "Fetching package for project ID: ${PACKAGE_PROJECT_ID}"\n\n      releases_api_url="https://gitlab.com/api/v4/projects/${PACKAGE_PROJECT_ID}/releases"\n      latest_release=$(curl ${CURL_OPTS} --header "PRIVATE-TOKEN: $GITLAB_TOKEN" "$releases_api_url" | jq -r ''.[0]? // empty'')\n      \n      if [ -z "$latest_release" ] || [ "$latest_release" = "null" ]; then\n        echo "WARNING: No releases found for project ${PACKAGE_PROJECT_ID}. Skipping."\n        exit 0\n      fi\n\n      asset_url=$(echo "$latest_release" | jq -r ''.assets.links[]? | select(.name | endswith(".pkg.tar.zst")) | .url'' | head -n 1)\n      asset_name=$(echo "$latest_release" | jq -r ''.assets.links[]? | select(.name | endswith(".pkg.tar.zst")) | .name'' | head -n 1)\n\n      if [ -z "$asset_url" ] || [ -z "$asset_name" ]; then\n        echo "WARNING: Could not find a .pkg.tar.zst asset for project ${PACKAGE_PROJECT_ID}"\n        exit 0\n      fi\n\n      echo "Downloading ${asset_name}..."\n      curl --location ${CURL_OPTS} --header "PRIVATE-TOKEN: $GITLAB_TOKEN" --output "${REPO_ARCH_DIR}/${asset_name}" "${asset_url}"\n\n      echo "Package ${asset_name} downloaded."\n  artifacts:\n    paths:\n      - "${REPO_DIR}/x86_64/"\n    expire_in: 1 day\n' "$project_id" "$project_id" >> generated-jobs.yml
+      # The initial newline ensures separation between jobs
+      printf '\nbuild-package-%s:\n  stage: build\n  image: archlinux:base-devel\n  variables:\n    PACKAGE_PROJECT_ID: "%s"\n  before_script:\n    - ''echo "Installing dependencies..."''\n    - ''pacman -Syu --noconfirm --needed''\n    - ''pacman -S --noconfirm --needed curl jq base-devel git unzip''\n    - |\n      if [ -z "${GITLAB_TOKEN:-}" ]; then\n        echo "ERROR: GITLAB_TOKEN is not set"\n        exit 1\n      fi\n      export CURL_OPTS="--silent --show-error --fail --connect-timeout ${CURL_CONNECT_TIMEOUT} --max-time ${CURL_TIMEOUT}"\n  script:\n    - |\n      set -euo pipefail\n      trap ''\''echo "Error occurred at line $LINENO. Exit code: $?" >&2''\'' ERR\n      \n      REPO_ARCH_DIR="${CI_PROJECT_DIR}/${REPO_DIR}/x86_64"\n      mkdir -p "${REPO_ARCH_DIR}"\n\n      echo "Fetching package for project ID: ${PACKAGE_PROJECT_ID}"\n\n      releases_api_url="https://gitlab.com/api/v4/projects/${PACKAGE_PROJECT_ID}/releases"\n      latest_release=$(curl ${CURL_OPTS} --header "PRIVATE-TOKEN: $GITLAB_TOKEN" "$releases_api_url" | jq -r ''.[0]? // empty'')\n      \n      if [ -z "$latest_release" ] || [ "$latest_release" = "null" ]; then\n        echo "WARNING: No releases found for project ${PACKAGE_PROJECT_ID}. Skipping."\n        exit 0\n      fi\n\n      asset_url=$(echo "$latest_release" | jq -r ''.assets.links[]? | select(.name | endswith(".pkg.tar.zst")) | .url'' | head -n 1)\n      asset_name=$(echo "$latest_release" | jq -r ''.assets.links[]? | select(.name | endswith(".pkg.tar.zst")) | .name'' | head -n 1)\n\n      if [ -z "$asset_url" ] || [ -z "$asset_name" ]; then\n        echo "WARNING: Could not find a .pkg.tar.zst asset for project ${PACKAGE_PROJECT_ID}"\n        exit 0\n      fi\n\n      echo "Downloading ${asset_name}..."\n      curl --location ${CURL_OPTS} --header "PRIVATE-TOKEN: $GITLAB_TOKEN" --output "${REPO_ARCH_DIR}/${asset_name}" "${asset_url}"\n\n      echo "Package ${asset_name} downloaded."\n  artifacts:\n    paths:\n      - "${REPO_DIR}/x86_64/"\n    expire_in: 1 day\n' "$project_id" "$project_id" >> generated-jobs.yml
 
       done
     - echo "--- Generated dynamic CI config ---"
