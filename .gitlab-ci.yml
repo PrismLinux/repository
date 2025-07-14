@@ -348,7 +348,7 @@ deploy_website:
       optional: true
   before_script:
     - pacman -Syu --noconfirm
-    - pacman -S --noconfirm curl jq nodejs npm zip
+    - pacman -S --noconfirm curl jq nodejs npm unzip
     - curl -fsSL https://bun.sh/install | bash
     - export PATH="$HOME/.bun/bin:$PATH"
   script:
