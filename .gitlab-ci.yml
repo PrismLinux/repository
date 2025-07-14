@@ -34,15 +34,6 @@ stages:
   - |
     trap 'echo "Error at line $LINENO. Exit code: $?" >&2' ERR
 
-.gitlab_api_config: &gitlab_api_config
-  - |
-    if [ -z "${GITLAB_TOKEN:-}" ]; then
-      echo "ERROR: GITLAB_TOKEN is not set. This token is required to read releases."
-      exit 1
-    fi
-    export CURL_OPTS="--silent --show-error --fail --location --connect-timeout 10 --max-time 30"
-    export GITLAB_API_OPTS="--header \"PRIVATE-TOKEN: $GITLAB_TOKEN\""
-
 validate_config:
   stage: prepare
   before_script:
@@ -65,34 +56,47 @@ check_packages:
   needs: ["validate_config"]
   before_script:
     - *install_dependencies
-    - *gitlab_api_config
   script:
     - *error_handling
-    - mkdir -p "${DOWNLOAD_CACHE_DIR}"
-    - >-
+    - |
+      if [ -z "${GITLAB_TOKEN:-}" ]; then
+        echo "ERROR: GITLAB_TOKEN is not set. This token is required to read releases."
+        exit 1
+      fi
+
+      CURL_OPTS="--silent --show-error --fail --location --connect-timeout 10 --max-time 30"
+
+      mkdir -p "${DOWNLOAD_CACHE_DIR}"
+
       if [ -f "${CHECKSUMS_FILE}" ]; then
         declare -A old_checksums
         while IFS='|' read -r filename checksum; do
           [ -n "$filename" ] && [ -n "$checksum" ] && old_checksums["$filename"]="$checksum"
         done < "${CHECKSUMS_FILE}"
       fi
-    - |
+
       project_ids=$(grep -vE '^\s*#|^\s*$' packages_id.txt | awk '{print $1}' | tr -d '\r')
       changed_packages=0
+
       for project_id in ${project_ids}; do
         releases_api_url="https://gitlab.com/api/v4/projects/${project_id}/releases"
-        latest_release=$(curl ${CURL_OPTS} ${GITLAB_API_OPTS} "${releases_api_url}" | jq '.[0]? // empty')
+        
+        latest_release=$(curl ${CURL_OPTS} --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" "${releases_api_url}" | jq '.[0]? // empty')
+        
         if [ -z "$latest_release" ] || [ "$latest_release" = "null" ]; then
           echo "WARNING: No releases found for project ${project_id}"
           continue
         fi
+        
         echo "${latest_release}" | jq -c '.assets.links[]? | select(.name | endswith(".pkg.tar.zst"))' | while read -r asset; do
           asset_name=$(echo "$asset" | jq -r '.name')
           asset_url=$(echo "$asset" | jq -r '.url')
           temp_file=$(mktemp)
+          
           echo "Checking: ${asset_name}"
-          curl ${CURL_OPTS} ${GITLAB_API_OPTS} --output "${temp_file}" "${asset_url}"
+          curl ${CURL_OPTS} --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" --output "${temp_file}" "${asset_url}"
           new_checksum=$(sha256sum "${temp_file}" | awk '{print $1}')
+          
           if [[ ! -v old_checksums["$asset_name"] ]] || [[ "${old_checksums[$asset_name]}" != "$new_checksum" ]]; then
             echo "CHANGED: ${asset_name}"
             mv "${temp_file}" "${DOWNLOAD_CACHE_DIR}/${asset_name}"
@@ -100,11 +104,16 @@ check_packages:
           else
             rm -f "${temp_file}"
           fi
+          
           echo "${asset_name}|${new_checksum}" >> "${CHECKSUMS_FILE}.tmp"
         done
       done
-    - mv "${CHECKSUMS_FILE}.tmp" "${CHECKSUMS_FILE}"
-    - |
+
+      # Перевіряємо, чи існує тимчасовий файл, перш ніж його переміщувати
+      if [ -f "${CHECKSUMS_FILE}.tmp" ]; then
+        mv "${CHECKSUMS_FILE}.tmp" "${CHECKSUMS_FILE}"
+      fi
+
       if [ "$changed_packages" -eq 1 ]; then
         echo "Package changes detected. Triggering rebuild."
         touch "${REBUILD_TRIGGER_FILE}"
@@ -128,13 +137,16 @@ build_repository:
     - |
       REPO_ARCH_DIR="${REPO_DIR}/x86_64"
       mkdir -p "${REPO_ARCH_DIR}"
+
       if [ -d "${DOWNLOAD_CACHE_DIR}" ] && [ "$(ls -A ${DOWNLOAD_CACHE_DIR})" ]; then
         echo "Copying packages from cache..."
         cp -v "${DOWNLOAD_CACHE_DIR}"/*.pkg.tar.zst "${REPO_ARCH_DIR}/"
       fi
+
       cd "${REPO_ARCH_DIR}"
+
       if ! ls *.pkg.tar.zst 1> /dev/null 2>&1; then
-        echo "No packages found to build the repository. Exiting gracefully."
+        echo "No packages found to build the repository."
         echo "packages_found=false" > ../../package_status.txt
       else
         echo "Building repository database..."
@@ -164,14 +176,17 @@ test_packages:
     - *error_handling
     - |
       REPO_ARCH_DIR="${REPO_DIR}/x86_64"
+
       if ! grep -q "packages_found=true" package_status.txt; then
         echo "No new packages were built. Skipping tests."
         exit 0
       fi
+
       if [ ! -f "${REPO_ARCH_DIR}/${REPO_NAME}.db" ]; then
         echo "ERROR: Repository database not found!"
         exit 1
       fi
+
       echo "Validating packages in repository..."
       for pkg_file in "${REPO_ARCH_DIR}"/*.pkg.tar.zst; do
         echo "Validating: $(basename "$pkg_file")"
