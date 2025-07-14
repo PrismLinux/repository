@@ -24,6 +24,7 @@ stages:
   - check
   - build
   - test
+  - generate
   - deploy
 
 .install_dependencies: &install_dependencies
@@ -226,65 +227,102 @@ test_packages:
       exists:
         - "${REBUILD_TRIGGER_FILE}"
 
-pages:
-  stage: deploy
+generate_dynamic_pipeline:
+  stage: generate
   needs: ["build_repository", "test_packages"]
   before_script:
     - *install_dependencies
-    - curl -fsSL https://bun.sh/install | bash
-    - export PATH="$HOME/.bun/bin:$PATH"
   script:
     - *error_handling
     - |
-      if ! grep -q "packages_found=true" package_status.txt; then
-        echo "No packages found, skipping pages deployment."
-        exit 0
-      fi
-      REPO_ARCH_DIR="${REPO_DIR}/x86_64"
-      mkdir -p "${REPO_DIR}/api"
-      temp_json=$(mktemp)
-      for pkg_file in "${REPO_ARCH_DIR}"/*.pkg.tar.zst; do
-        [ -f "$pkg_file" ] || continue
-        pkg_info=$(pacman -Qip "$pkg_file" 2>/dev/null || echo "")
-        if [ -n "$pkg_info" ]; then
-          name=$(echo "$pkg_info" | grep -m1 "^Name" | sed 's/Name[[:space:]]*:[[:space:]]*//')
-          version=$(echo "$pkg_info" | grep -m1 "^Version" | sed 's/Version[[:space:]]*:[[:space:]]*//')
-          desc=$(echo "$pkg_info" | grep -m1 "^Description" | sed 's/Description[[:space:]]*:[[:space:]]*//')
-          arch=$(echo "$pkg_info" | grep -m1 "^Architecture" | sed 's/Architecture[[:space:]]*:[[:space:]]*//')
-          filename=$(basename "$pkg_file")
-          size=$(ls -lh "$pkg_file" | awk '{print $5}')
-          modified=$(date -r "$pkg_file" '+%Y-%m-%d %H:%M:%S')
-          jq -cn --arg name "$name" --arg version "$version" --arg desc "$desc" --arg arch "$arch" \
-                 --arg filename "$filename" --arg size "$size" --arg modified "$modified" \
-                 '{name: $name, version: $version, description: $desc, architecture: $arch, filename: $filename, size: $size, modified: $modified}' >> "$temp_json"
-        fi
-      done
-      if [ -s "$temp_json" ]; then 
-        jq -s . "$temp_json" > "${REPO_DIR}/api/packages.json"
-      else 
-        echo "[]" > "${REPO_DIR}/api/packages.json"
-      fi
-      rm -f "$temp_json"
-
-      if [ -d "website" ]; then
-        echo "Building Vue frontend..."
-        cd website
-        bun install --frozen-lockfile
-        bun run build
-        if [ ! -d "dist" ]; then
-          echo "ERROR: Build failed - dist directory not found"
-          exit 1
-        fi
-        echo "Copying dist contents to ${REPO_DIR}/..."
-        cp -rv dist/* "${REPO_DIR}/"
-        ls -la "${REPO_DIR}/" | head -20
+      if grep -q "packages_found=true" package_status.txt; then
+        cat > "${DYNAMIC_PIPELINE_FILE}" << 'EOF'
+        pages:
+          stage: deploy
+          image: archlinux:base-devel
+          before_script:
+            - pacman -Syu --noconfirm --needed curl jq base-devel git unzip
+            - curl -fsSL https://bun.sh/install | bash
+            - export PATH="$HOME/.bun/bin:$PATH"
+          script:
+            - set -euo pipefail
+            - trap 'echo "Error at line $LINENO. Exit code: $?" >&2' ERR
+            - |
+              REPO_ARCH_DIR="${REPO_DIR}/x86_64"
+              mkdir -p "${REPO_DIR}/api"
+              temp_json=$(mktemp)
+              for pkg_file in "${REPO_ARCH_DIR}"/*.pkg.tar.zst; do
+                [ -f "$pkg_file" ] || continue
+                pkg_info=$(pacman -Qip "$pkg_file" 2>/dev/null || echo "")
+                if [ -n "$pkg_info" ]; then
+                  name=$(echo "$pkg_info" | grep -m1 "^Name" | sed 's/Name[[:space:]]*:[[:space:]]*//')
+                  version=$(echo "$pkg_info" | grep -m1 "^Version" | sed 's/Version[[:space:]]*:[[:space:]]*//')
+                  desc=$(echo "$pkg_info" | grep -m1 "^Description" | sed 's/Description[[:space:]]*:[[:space:]]*//')
+                  arch=$(echo "$pkg_info" | grep -m1 "^Architecture" | sed 's/Architecture[[:space:]]*:[[:space:]]*//')
+                  filename=$(basename "$pkg_file")
+                  size=$(ls -lh "$pkg_file" | awk '{print $5}')
+                  modified=$(date -r "$pkg_file" '+%Y-%m-%d %H:%M:%S')
+                  jq -cn --arg name "$name" --arg version "$version" --arg desc "$desc" --arg arch "$arch" \
+                         --arg filename "$filename" --arg size "$size" --arg modified "$modified" \
+                         '{name: $name, version: $version, description: $desc, architecture: $arch, filename: $filename, size: $size, modified: $modified}' >> "$temp_json"
+                fi
+              done
+              if [ -s "$temp_json" ]; then 
+                jq -s . "$temp_json" > "${REPO_DIR}/api/packages.json"
+              else 
+                echo "[]" > "${REPO_DIR}/api/packages.json"
+              fi
+              rm -f "$temp_json"
+              if [ -d "website" ]; then
+                echo "Building Vue frontend..."
+                cd website
+                bun install --frozen-lockfile
+                bun run build
+                if [ ! -d "dist" ]; then
+                  echo "ERROR: Build failed - dist directory not found"
+                  exit 1
+                fi
+                echo "Copying dist contents to ${REPO_DIR}/..."
+                cp -rv dist/* "${REPO_DIR}/"
+                ls -la "${REPO_DIR}/" | head -20
+              else
+                echo "WARNING: website directory not found, skipping Vue build"
+              fi
+          artifacts:
+            paths:
+              - public
+            expire_in: 1 week
+          rules:
+            - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+        EOF
       else
-        echo "WARNING: website directory not found, skipping Vue build"
+        echo "No packages found, skipping pages deployment."
+        echo "" > "${DYNAMIC_PIPELINE_FILE}"
       fi
   artifacts:
     paths:
-      - public
-    expire_in: 1 week
+      - "${DYNAMIC_PIPELINE_FILE}"
+    expire_in: 1 hour
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $REBUILD_TRIGGER_FILE
+      exists:
+        - "${REBUILD_TRIGGER_FILE}"
+
+trigger_dynamic_pipeline:
+  stage: deploy
+  needs: ["generate_dynamic_pipeline"]
+  script:
+    - *error_handling
+    - |
+      if [ -s "${DYNAMIC_PIPELINE_FILE}" ]; then
+        curl --request POST --header "PRIVATE-TOKEN: $GITLAB_TOKEN" --header "Content-Type: application/json" \
+             --data "{\"ref\":\"$CI_DEFAULT_BRANCH\",\"variables\":[]}" \
+             --data-binary @"${DYNAMIC_PIPELINE_FILE}" \
+             "https://gitlab.com/api/v4/projects/${CI_PROJECT_ID}/pipeline"
+      else
+        echo "No dynamic pipeline to trigger."
+      fi
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     - if: $REBUILD_TRIGGER_FILE
