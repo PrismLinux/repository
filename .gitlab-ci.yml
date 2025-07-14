@@ -6,6 +6,7 @@ variables:
   CACHE_DIR: "cache"
   CHECKSUMS_FILE: "package_checksums.txt"
   REBUILD_TRIGGER_FILE: "rebuild_packages.txt"
+  DYNAMIC_PIPELINE_FILE: "dynamic_pipeline.yml"
   CURL_TIMEOUT: "30"
   CURL_CONNECT_TIMEOUT: "10"
 
@@ -154,6 +155,7 @@ build_repository:
       REPO_ARCH_DIR="${REPO_DIR}/x86_64"
       mkdir -p "${REPO_ARCH_DIR}"
       project_ids=$(grep -vE '^\s*#|^\s*$' packages_id.txt | awk '{print $1}' | tr -d '\r')
+      package_count=0
 
       for project_id in $project_ids; do
         releases_api_url="https://gitlab.com/api/v4/projects/${project_id}/releases"
@@ -168,25 +170,29 @@ build_repository:
           if [ -n "$asset_url" ] && [ -n "$asset_name" ]; then
             echo "Downloading ${asset_name}..."
             curl --location ${CURL_OPTS} --header "PRIVATE-TOKEN: $GITLAB_TOKEN" --output "${REPO_ARCH_DIR}/${asset_name}" "${asset_url}"
+            ((package_count++))
           fi
         done
       done
 
       cd "${REPO_ARCH_DIR}"
       rm -f ${REPO_NAME}.db* ${REPO_NAME}.files*
-      if ls ./*.pkg.tar.zst 1> /dev/null 2>&1; then
+      if [ $package_count -gt 0 ]; then
         repo-add "${REPO_NAME}.db.tar.gz" *.pkg.tar.zst
         ln -sf "${REPO_NAME}.db.tar.gz" "${REPO_NAME}.db"
         ln -sf "${REPO_NAME}.files.tar.gz" "${REPO_NAME}.files"
+        echo "packages_found=true" > package_status.txt
       else
         tar -czf "${REPO_NAME}.db.tar.gz" -T /dev/null
         tar -czf "${REPO_NAME}.files.tar.gz" -T /dev/null
         ln -sf "${REPO_NAME}.db.tar.gz" "${REPO_NAME}.db"
         ln -sf "${REPO_NAME}.files.tar.gz" "${REPO_NAME}.files"
+        echo "packages_found=false" > package_status.txt
       fi
   artifacts:
     paths:
       - "${REPO_DIR}/x86_64/"
+      - package_status.txt
     expire_in: 1 day
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
@@ -230,6 +236,10 @@ pages:
   script:
     - *error_handling
     - |
+      if ! grep -q "packages_found=true" package_status.txt; then
+        echo "No packages found, skipping pages deployment."
+        exit 0
+      fi
       REPO_ARCH_DIR="${REPO_DIR}/x86_64"
       mkdir -p "${REPO_DIR}/api"
       temp_json=$(mktemp)
@@ -249,15 +259,25 @@ pages:
                  '{name: $name, version: $version, description: $desc, architecture: $arch, filename: $filename, size: $size, modified: $modified}' >> "$temp_json"
         fi
       done
-      if [ -s "$temp_json" ]; then jq -s . "$temp_json" > "${REPO_DIR}/api/packages.json"; else echo "[]" > "${REPO_DIR}/api/packages.json"; fi
+      if [ -s "$temp_json" ]; then 
+        jq -s . "$temp_json" > "${REPO_DIR}/api/packages.json"
+      else 
+        echo "[]" > "${REPO_DIR}/api/packages.json"
+      fi
       rm -f "$temp_json"
 
       if [ -d "website" ]; then
+        echo "Building Vue frontend..."
         cd website
         bun install --frozen-lockfile
         bun run build
-        [ -d "dist" ] || { echo "ERROR: Build failed - dist directory not found"; exit 1; }
-        cp -r dist/. "${REPO_DIR}/"
+        if [ ! -d "dist" ]; then
+          echo "ERROR: Build failed - dist directory not found"
+          exit 1
+        fi
+        echo "Copying dist contents to ${REPO_DIR}/..."
+        cp -rv dist/* "${REPO_DIR}/"
+        ls -la "${REPO_DIR}/" | head -20
       else
         echo "WARNING: website directory not found, skipping Vue build"
       fi
