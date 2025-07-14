@@ -331,7 +331,11 @@ pages:
       optional: true
   before_script:
     - pacman -Syu --noconfirm
-    - pacman -S --noconfirm curl jq nodejs npm unzip rsync
+    - pacman -S --noconfirm curl jq unzip rsync
+    # Install Bun
+    - curl -fsSL https://bun.sh/install | bash
+    - export PATH="$HOME/.bun/bin:$PATH"
+    - bun --version
   script:
     - |
       set -eo pipefail
@@ -413,17 +417,28 @@ pages:
         cd website
         
         if [ -f "package.json" ]; then
-          echo "Using npm to install dependencies and build."
-          npm ci
-          npm run build
+          echo "Using Bun to install dependencies and build."
+          export PATH="$HOME/.bun/bin:$PATH"
+          
+          # Install dependencies with Bun
+          bun install
+          
+          # Build the project
+          if grep -q '"build"' package.json; then
+            bun run build
+          else
+            echo "No build script found in package.json. Skipping build step."
+          fi
           
           echo "Copying built frontend to '${REPO_DIR}'..."
           if [ -d "dist" ]; then
             rsync -a "dist/" "../${REPO_DIR}/"
           elif [ -d "build" ]; then
             rsync -a "build/" "../${REPO_DIR}/"
+          elif [ -d "out" ]; then
+            rsync -a "out/" "../${REPO_DIR}/"
           else
-            echo "Warning: No 'dist' or 'build' directory found after build."
+            echo "Warning: No 'dist', 'build', or 'out' directory found after build."
           fi
         else
           echo "Warning: 'website' directory exists but no 'package.json' found. Skipping build."
