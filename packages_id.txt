@@ -1,8 +1,9 @@
 70724583 # xmcl-launcher
 
 # Branding
-70964684 # Prism Linux Fish Theme
+70964684 # PrismLinux Fish Theme
 71182518 # About Prism Linux
+71715668 # PrismLinux Hooks
 71409077 # Crystallize CLI
 71565033 # Crystallize GUI
 71465108 # Prism Package manager
