@@ -1,12 +1,13 @@
 70724583 # xmcl-launcher
+72073467 # Gaming meta
 
 # Branding
 70964684 # PrismLinux Fish Theme
 71182518 # About Prism Linux
-71715668 # PrismLinux Hooks
 71409077 # Crystallize CLI
-71565033 # Crystallize GUI
 71465108 # Prism Package manager
+71565033 # Crystallize GUI
 71571505 # Prism Mirrorlist
 71590048 # Grub
 71590188 # Grub Theme
+71715668 # PrismLinux Hooks
