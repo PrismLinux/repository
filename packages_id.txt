@@ -1,4 +1,5 @@
 72073467 # Gaming meta
+72958263 # Rate mirrors
 
 # Branding
 70964684 # PrismLinux Fish Theme
@@ -13,6 +14,6 @@
 
 
 # Settings
-72942471 # PrismLinux Settings
 72940371 # Gnome Settings
 72941090 # Plasma Settings
+72942471 # PrismLinux Settings
