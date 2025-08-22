@@ -1,18 +1,22 @@
 <script setup lang="ts">
 import { ref, watchEffect } from "vue";
-import SetupView from "./components/SetupView.vue";
 import PackagesView from "./components/PackagesView.vue";
 
-const activeTab = ref("setup");
+const activeTab = ref("packages");
 
 // Update active tab based on URL hash for direct linking
 watchEffect(() => {
+  activeTab.value = "packages";
+
+  // Page <<Setup>> disabled.
+  /*
   const hash = window.location.hash.slice(1);
   if (hash === "packages") {
     activeTab.value = "packages";
   } else {
     activeTab.value = "setup";
   }
+  */
 });
 
 function showTab(tabName: string) {
@@ -31,12 +35,12 @@ function showTab(tabName: string) {
     </div>
 
     <div class="nav-tabs">
-      <button
+      <!-- <button
         :class="['nav-tab', { active: activeTab === 'setup' }]"
         @click="showTab('setup')"
       >
         Setup
-      </button>
+      </button> -->
       <button
         :class="['nav-tab', { active: activeTab === 'packages' }]"
         @click="showTab('packages')"
@@ -45,9 +49,9 @@ function showTab(tabName: string) {
       </button>
     </div>
 
-    <div v-show="activeTab === 'setup'" class="tab-content">
+    <!-- <div v-show="activeTab === 'setup'" class="tab-content">
       <SetupView />
-    </div>
+    </div> -->
 
     <div v-show="activeTab === 'packages'" class="tab-content">
       <PackagesView />
