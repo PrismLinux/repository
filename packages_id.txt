@@ -1,5 +1,6 @@
 72073467 # Gaming meta
 72958263 # Rate mirrors
+74020675 # Graphics
 
 
 # Branding
