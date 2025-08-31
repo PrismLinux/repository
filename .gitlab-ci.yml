@@ -28,38 +28,55 @@ stages:
   - "update_repo"
   - "deploy"
 
-# Detect changed packages and build them all in one job
+# Detect changed packages and build them
 build_changed_packages:
   stage: "detect_and_build"
   before_script:
     - "pacman -Syu --noconfirm devtools git base-devel"
   script:
     - |
-      # Determine which package directories with PKGBUILD have changed
-      CHANGED_DIRS=$(git diff --name-only $CI_COMMIT_BEFORE_SHA $CI_COMMIT_SHA | grep "${PKGBUILD_DIR}/.*/PKGBUILD$" | xargs -n1 dirname | sed "s|^${PKGBUILD_DIR}/||" | sort -u)
+      echo "Determining changed packages..."
 
-      echo "Found changed packages: $CHANGED_DIRS"
-
-      if [ -z "$CHANGED_DIRS" ]; then
-        echo "No package changes detected"
-        exit 0
+      # Handle initial commit case
+      if [ "$CI_COMMIT_BEFORE_SHA" = "0000000000000000000000000000000000000000" ]; then
+        echo "Initial commit detected, checking all PKGBUILDs..."
+        CHANGED_FILES=$(git ls-tree -r --name-only HEAD | grep "${PKGBUILD_DIR}/.*/PKGBUILD$")
+      else
+        echo "Comparing with previous commit: $CI_COMMIT_BEFORE_SHA"
+        CHANGED_FILES=$(git diff --name-only "$CI_COMMIT_BEFORE_SHA" "$CI_COMMIT_SHA" | grep "${PKGBUILD_DIR}/.*/PKGBUILD$")
       fi
 
-      # Create directory for built packages
-      mkdir -p built_packages
+      # Only process if we have changed files
+      if [ -n "$CHANGED_FILES" ]; then
+        echo "Found changed PKGBUILD files:"
+        echo "$CHANGED_FILES"
 
-      # Build each changed package
-      for pkg_dir in $CHANGED_DIRS; do
-        echo "Building package: $pkg_dir"
-        cd ${PKGBUILD_DIR}/$pkg_dir
-        makepkg --printsrcinfo > .SRCINFO
-        extra-x86_64-build -- -s
-        cd ../../
-        cp ${PKGBUILD_DIR}/$pkg_dir/*.pkg.tar.zst built_packages/
-      done
+        # Create directory for built packages
+        mkdir -p built_packages
+
+        # Process each changed package
+        echo "$CHANGED_FILES" | while read -r pkg_path; do
+          pkg_dir=$(dirname "$pkg_path" | sed "s|^${PKGBUILD_DIR}/||")
+          echo "Building package: $pkg_dir"
+
+          # Build the package
+          cd "${PKGBUILD_DIR}/$pkg_dir"
+          makepkg --printsrcinfo > .SRCINFO
+          extra-x86_64-build -- -s
+          cd ../../
+
+          # Copy to built packages directory
+          cp "${PKGBUILD_DIR}/$pkg_dir"/*.pkg.tar.zst built_packages/ 2>/dev/null || true
+        done
+
+        echo "Successfully built packages in built_packages/"
+      else
+        echo "No package changes detected"
+      fi
   artifacts:
     paths:
       - "built_packages/*.pkg.tar.zst"
+    expire_in: 1 day
   rules:
     - if: "$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH"
     - if: "$CI_PIPELINE_SOURCE == 'merge_request_event'"
@@ -75,9 +92,10 @@ update_repository:
     - |
       # Clone or initialize repo branch
       if ! git ls-remote --exit-code . "refs/heads/$REPO_BRANCH" >/dev/null; then
+        echo "Creating new repo branch: $REPO_BRANCH"
         git checkout --orphan $REPO_BRANCH
         git rm -rf .
-        echo "PrismLinux repository" > README.md
+        echo "Arch Linux repository" > README.md
         git add README.md
         git commit -m "Initial repository"
         git push -u origin $REPO_BRANCH
@@ -85,17 +103,19 @@ update_repository:
       fi
 
       # Clone the repo branch
+      echo "Cloning repo branch: $REPO_BRANCH"
       git clone -b $REPO_BRANCH "https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" repo-branch
       cd repo-branch
 
       # Create a temporary directory for processing
-      mkdir -p ../temp_processing
-      cd ../temp_processing
+      cd ..
+      mkdir -p temp_processing
+      cd temp_processing
 
       # Copy locally built packages if available
       if [ -d "../built_packages" ]; then
         echo "Copying locally built packages"
-        cp ../built_packages/*.pkg.tar.zst . || true
+        cp ../built_packages/*.pkg.tar.zst . 2>/dev/null || true
       fi
 
       # --- Process remote HTTPS packages ---
@@ -188,7 +208,7 @@ update_repository:
           done < "../${PKGBUILD_DIR}/remote_packages.txt" 2>/dev/null || true
 
           # Check if it's from GitLab projects
-          if [ ! "$package_exists" = true ] && [ -f "../${PKGBUILD_DIR}/packages_id.txt" ]; then
+          if [ "$package_exists" = false ] && [ -f "../${PKGBUILD_DIR}/packages_id.txt" ]; then
             while IFS= read -r project_id; do
               [[ -z "$project_id" || "$project_id" =~ ^[[:space:]]*# ]] && continue
 
