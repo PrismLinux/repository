@@ -35,19 +35,55 @@ build_changed_packages:
     - "pacman -Syu --noconfirm devtools git base-devel"
   script:
     - |
+      set -e  # Fail immediately on any error
+
       echo "Determining changed packages..."
+      echo "CI_COMMIT_BEFORE_SHA: $CI_COMMIT_BEFORE_SHA"
+      echo "CI_COMMIT_SHA: $CI_COMMIT_SHA"
 
       # Handle initial commit case
       if [ "$CI_COMMIT_BEFORE_SHA" = "0000000000000000000000000000000000000000" ]; then
         echo "Initial commit detected, checking all PKGBUILDs..."
-        CHANGED_FILES=$(git ls-tree -r --name-only HEAD | grep "${PKGBUILD_DIR}/.*/PKGBUILD$")
+        CHANGED_FILES=$(git ls-tree -r --name-only HEAD 2>&1)
+        if [ $? -ne 0 ]; then
+          echo "Error: Failed to list files in repository"
+          echo "$CHANGED_FILES"
+          exit 1
+        fi
+        CHANGED_FILES=$(echo "$CHANGED_FILES" | grep -E "${PKGBUILD_DIR}/.*/PKGBUILD$")
       else
         echo "Comparing with previous commit: $CI_COMMIT_BEFORE_SHA"
-        CHANGED_FILES=$(git diff --name-only "$CI_COMMIT_BEFORE_SHA" "$CI_COMMIT_SHA" | grep "${PKGBUILD_DIR}/.*/PKGBUILD$")
+        # Ensure we have a proper checkout
+        git fetch origin --depth=100 || echo "Warning: git fetch failed"
+
+        # Check if the commit exists
+        if ! git cat-file -e "$CI_COMMIT_BEFORE_SHA^{commit}" 2>/dev/null; then
+          echo "Warning: Previous commit $CI_COMMIT_BEFORE_SHA not found in local repository"
+          git fetch origin $CI_COMMIT_BEFORE_SHA --depth=1 || true
+        fi
+
+        CHANGED_FILES=$(git diff --name-only "$CI_COMMIT_BEFORE_SHA" "$CI_COMMIT_SHA" 2>&1)
+        if [ $? -ne 0 ]; then
+          echo "Error: Failed to compare commits"
+          echo "$CHANGED_FILES"
+          # Try a shallower fetch as fallback
+          git fetch origin --depth=50 || echo "Warning: shallow fetch also failed"
+          CHANGED_FILES=$(git diff --name-only "$CI_COMMIT_BEFORE_SHA" "$CI_COMMIT_SHA" 2>&1) || true
+          if [ $? -ne 0 ]; then
+            echo "Error: Still unable to compare commits after additional fetch"
+            echo "Attempting to check all PKGBUILDs as fallback..."
+            CHANGED_FILES=$(git ls-tree -r --name-only HEAD | grep -E "${PKGBUILD_DIR}/.*/PKGBUILD$")
+          fi
+        else
+          CHANGED_FILES=$(echo "$CHANGED_FILES" | grep -E "${PKGBUILD_DIR}/.*/PKGBUILD$")
+        fi
       fi
 
+      echo "Raw diff output:"
+      echo "$CHANGED_FILES" || echo "No diff output"
+
       # Only process if we have changed files
-      if [ -n "$CHANGED_FILES" ]; then
+      if [ -n "$CHANGED_FILES" ] && [ "$CHANGED_FILES" != " " ]; then
         echo "Found changed PKGBUILD files:"
         echo "$CHANGED_FILES"
 
@@ -55,23 +91,61 @@ build_changed_packages:
         mkdir -p built_packages
 
         # Process each changed package
-        echo "$CHANGED_FILES" | while read -r pkg_path; do
+        echo "$CHANGED_FILES" | while IFS= read -r pkg_path; do
+          if [ -z "$pkg_path" ]; then
+            continue
+          fi
+
           pkg_dir=$(dirname "$pkg_path" | sed "s|^${PKGBUILD_DIR}/||")
+          echo "Processing package directory: $pkg_dir"
+
+          # Check if directory exists
+          if [ ! -d "${PKGBUILD_DIR}/$pkg_dir" ]; then
+            echo "Error: Directory ${PKGBUILD_DIR}/$pkg_dir does not exist"
+            continue
+          fi
+
+          # Check if PKGBUILD exists
+          if [ ! -f "${PKGBUILD_DIR}/$pkg_dir/PKGBUILD" ]; then
+            echo "Error: PKGBUILD file not found in ${PKGBUILD_DIR}/$pkg_dir"
+            continue
+          fi
+
           echo "Building package: $pkg_dir"
+          cd "${PKGBUILD_DIR}/$pkg_dir" || exit 1
+
+          # Generate .SRCINFO
+          makepkg --printsrcinfo > .SRCINFO 2>&1
+          if [ $? -ne 0 ]; then
+            echo "Warning: Failed to generate .SRCINFO for $pkg_dir, continuing anyway"
+          fi
 
           # Build the package
-          cd "${PKGBUILD_DIR}/$pkg_dir"
-          makepkg --printsrcinfo > .SRCINFO
           extra-x86_64-build -- -s
+          if [ $? -ne 0 ]; then
+            echo "Error: Failed to build package $pkg_dir"
+            cd ../../
+            exit 1
+          fi
           cd ../../
 
           # Copy to built packages directory
-          cp "${PKGBUILD_DIR}/$pkg_dir"/*.pkg.tar.zst built_packages/ 2>/dev/null || true
+          if ls "${PKGBUILD_DIR}/$pkg_dir"/*.pkg.tar.zst 1> /dev/null 2>&1; then
+            cp "${PKGBUILD_DIR}/$pkg_dir"/*.pkg.tar.zst built_packages/
+            echo "Successfully copied package for $pkg_dir"
+          else
+            echo "Warning: No package files found for $pkg_dir after build"
+          fi
         done
 
-        echo "Successfully built packages in built_packages/"
+        # Check if we actually built any packages
+        if ls built_packages/*.pkg.tar.zst 1> /dev/null 2>&1; then
+          echo "Successfully built packages in built_packages/"
+        else
+          echo "Warning: No packages were built, but changes were detected"
+        fi
       else
-        echo "No package changes detected"
+        echo "No package changes detected or diff output was empty"
       fi
   artifacts:
     paths:
@@ -90,6 +164,8 @@ update_repository:
     - 'git config user.name "GitLab CI"'
   script:
     - |
+      set -e
+
       # Clone or initialize repo branch
       if ! git ls-remote --exit-code . "refs/heads/$REPO_BRANCH" >/dev/null; then
         echo "Creating new repo branch: $REPO_BRANCH"
@@ -113,9 +189,11 @@ update_repository:
       cd temp_processing
 
       # Copy locally built packages if available
-      if [ -d "../built_packages" ]; then
+      if [ -d "../built_packages" ] && ls ../built_packages/*.pkg.tar.zst 1> /dev/null 2>&1; then
         echo "Copying locally built packages"
         cp ../built_packages/*.pkg.tar.zst . 2>/dev/null || true
+      else
+        echo "No locally built packages to copy"
       fi
 
       # --- Process remote HTTPS packages ---
@@ -239,9 +317,11 @@ update_repository:
 
       # Copy new packages to repository
       cd ..
-      if [ -n "$(ls -A temp_processing/*.pkg.tar.zst 2>/dev/null)" ]; then
+      if [ -d "temp_processing" ] && ls temp_processing/*.pkg.tar.zst 1> /dev/null 2>&1; then
         echo "Copying new packages to repository"
         cp temp_processing/*.pkg.tar.zst repo-branch/
+      else
+        echo "No new packages to copy to repository"
       fi
 
       # Update repository database
@@ -252,8 +332,14 @@ update_repository:
       rm -f ${REPO_NAME}.db ${REPO_NAME}.db.tar.gz ${REPO_NAME}.files ${REPO_NAME}.files.tar.gz
 
       # Create new database
-      if [ -n "$(ls -A *.pkg.tar.zst 2>/dev/null)" ]; then
+      if ls *.pkg.tar.zst 1> /dev/null 2>&1; then
         repo-add ${REPO_NAME}.db.tar.gz *.pkg.tar.zst
+        if [ $? -ne 0 ]; then
+          echo "Warning: repo-add failed, trying with individual packages"
+          for pkg in *.pkg.tar.zst; do
+            repo-add ${REPO_NAME}.db.tar.gz "$pkg" || echo "Failed to add $pkg to repository"
+          done
+        fi
       else
         echo "No packages found in repository. The database will be empty."
         touch "${REPO_NAME}.db.tar.gz" "${REPO_NAME}.files.tar.gz"
@@ -283,6 +369,8 @@ deploy_web_interface:
     - 'export PATH="$HOME/.bun/bin:$PATH"'
   script:
     - |
+      set -e
+
       # Create structure for GitLab Pages
       mkdir -p public/api
 
