@@ -19,7 +19,6 @@ image: "archlinux:latest"
 
 variables:
   REPO_NAME: "prismlinux"
-  REPO_BRANCH: "repo"
   REPO_DIR: "public"
   PKGBUILD_DIR: "PKGBUILDs"
 
@@ -148,9 +147,8 @@ update_repository:
     - 'git config user.name "GitLab CI"'
   script:
     - |
-      # Clone the repo branch (assume it already exists)
-      echo "Cloning repo branch: $REPO_BRANCH"
-      git clone -b $REPO_BRANCH "https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" repo-branch
+      echo "Cloning repo branch: repo"
+      git clone -b repo "https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" repo-branch
       cd repo-branch
 
       # Create a temporary directory for processing
@@ -323,8 +321,8 @@ update_repository:
       git add .
       git commit -m "Updated repository [skip ci]" || exit 0
 
-      # Use the personal access token for pushing
-      git push "https://gitlab-ci-token:${GITLAB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" $REPO_BRANCH
+      # Push using the personal access token
+      git push "https://gitlab-ci-token:${GITLAB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" repo
   dependencies:
     - "build_changed_packages"
   rules:
@@ -335,7 +333,7 @@ update_repository:
 deploy_web_interface:
   stage: "deploy"
   before_script:
-    - "pacman -Syu --noconfirm curl base-devel"
+    - "pacman -Syu --noconfirm curl base-devel git"
     # Install Bun
     - "curl -fsSL https://bun.sh/install | bash"
     - 'export PATH="$HOME/.bun/bin:$PATH"'
@@ -345,7 +343,7 @@ deploy_web_interface:
       mkdir -p public/api
 
       # Clone the repo branch to get package information
-      git clone -b $REPO_BRANCH "https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" repo-branch
+      git clone -b repo "https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" repo-branch
 
       # Generate JSON with package information
       echo "Generating packages.json..."
