@@ -143,7 +143,7 @@ build_changed_packages:
 update_repository:
   stage: "update_repo"
   before_script:
-    - "pacman -Syu --noconfirm pacman curl jq"
+    - "pacman -Syu --noconfirm pacman curl jq git"
     - 'git config user.email "ci@gitlab"'
     - 'git config user.name "GitLab CI"'
   script:
