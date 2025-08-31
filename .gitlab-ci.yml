@@ -143,24 +143,12 @@ build_changed_packages:
 update_repository:
   stage: "update_repo"
   before_script:
-    - "pacman -Syu --noconfirm pacman curl jq git"
+    - "pacman -Syu --noconfirm pacman git curl jq"
     - 'git config user.email "ci@gitlab"'
     - 'git config user.name "GitLab CI"'
   script:
     - |
-      # Clone or initialize repo branch
-      if ! git ls-remote --exit-code . "refs/heads/$REPO_BRANCH" >/dev/null; then
-        echo "Creating new repo branch: $REPO_BRANCH"
-        git checkout --orphan $REPO_BRANCH
-        git rm -rf .
-        echo "Arch Linux repository" > README.md
-        git add README.md
-        git commit -m "Initial repository"
-        git push -u origin $REPO_BRANCH
-        git checkout $CI_DEFAULT_BRANCH
-      fi
-
-      # Clone the repo branch
+      # Clone the repo branch (assume it already exists)
       echo "Cloning repo branch: $REPO_BRANCH"
       git clone -b $REPO_BRANCH "https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" repo-branch
       cd repo-branch
@@ -334,7 +322,9 @@ update_repository:
       # Prepare commit
       git add .
       git commit -m "Updated repository [skip ci]" || exit 0
-      git push origin $REPO_BRANCH
+
+      # Use the personal access token for pushing
+      git push "https://gitlab-ci-token:${GITLAB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" $REPO_BRANCH
   dependencies:
     - "build_changed_packages"
   rules:
