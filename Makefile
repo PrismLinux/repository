@@ -1,5 +1,5 @@
-REMOTE_PACKAGES := ./PKGBUILDs/remote_packages.txt
-PACKAGES := ./PKGBUILDs/packages_id.txt
+REMOTE_PACKAGES := remote_packages.txt
+PACKAGES := packages_id.txt
 TEMP_FILE := .temp_packages_$(shell date +%s)
 
 # Plain text output functions (no color formatting)

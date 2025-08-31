@@ -15,441 +15,202 @@
 # You should have received a copy of the GNU General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-image: "archlinux:latest"
+image: archlinux:latest
 
 variables:
   REPO_NAME: "prismlinux"
   REPO_DIR: "public"
-  PKGBUILD_DIR: "PKGBUILDs"
 
-stages:
-  - "detect_and_build"
-  - "update_repo"
-  - "deploy"
-
-# Detect changed packages and build them
-build_changed_packages:
-  stage: "detect_and_build"
-  before_script:
-    - "pacman -Syu --noconfirm devtools git base-devel"
-  script:
-    - |
-      echo "Determining changed packages..."
-      echo "CI_COMMIT_BEFORE_SHA: $CI_COMMIT_BEFORE_SHA"
-      echo "CI_COMMIT_SHA: $CI_COMMIT_SHA"
-
-      # Handle initial commit case
-      if [ "$CI_COMMIT_BEFORE_SHA" = "0000000000000000000000000000000000000000" ]; then
-        echo "Initial commit detected, checking all PKGBUILDs..."
-        CHANGED_FILES=$(git ls-tree -r --name-only HEAD 2>/dev/null || true)
-        CHANGED_FILES=$(echo "$CHANGED_FILES" | grep -E "${PKGBUILD_DIR}/.*/PKGBUILD$" || true)
-      else
-        echo "Comparing with previous commit: $CI_COMMIT_BEFORE_SHA"
-
-        # Ensure we have a proper checkout
-        git fetch origin --depth=100 || echo "Warning: git fetch failed"
-
-        # Check if the commit exists
-        if ! git cat-file -e "$CI_COMMIT_BEFORE_SHA^{commit}" 2>/dev/null; then
-          echo "Warning: Previous commit $CI_COMMIT_BEFORE_SHA not found in local repository"
-          git fetch origin $CI_COMMIT_BEFORE_SHA --depth=1 || echo "Warning: failed to fetch specific commit"
-        fi
-
-        CHANGED_FILES=$(git diff --name-only "$CI_COMMIT_BEFORE_SHA" "$CI_COMMIT_SHA" 2>/dev/null || true)
-        CHANGED_FILES=$(echo "$CHANGED_FILES" | grep -E "${PKGBUILD_DIR}/.*/PKGBUILD$" || true)
-      fi
-
-      echo "Raw diff output:"
-      if [ -n "$CHANGED_FILES" ]; then
-        echo "$CHANGED_FILES"
-      else
-        echo "No PKGBUILD changes detected"
-      fi
-
-      # Only process if we have changed files
-      if [ -n "$CHANGED_FILES" ]; then
-        echo "Found changed PKGBUILD files:"
-        echo "$CHANGED_FILES"
-
-        # Create directory for built packages
-        mkdir -p built_packages
-
-        # Process each changed package
-        echo "$CHANGED_FILES" | while IFS= read -r pkg_path; do
-          if [ -z "$pkg_path" ]; then
-            continue
-          fi
-
-          pkg_dir=$(dirname "$pkg_path" | sed "s|^${PKGBUILD_DIR}/||")
-          echo "Processing package directory: $pkg_dir"
-
-          # Check if directory exists
-          if [ ! -d "${PKGBUILD_DIR}/$pkg_dir" ]; then
-            echo "Error: Directory ${PKGBUILD_DIR}/$pkg_dir does not exist"
-            continue
-          fi
-
-          # Check if PKGBUILD exists
-          if [ ! -f "${PKGBUILD_DIR}/$pkg_dir/PKGBUILD" ]; then
-            echo "Error: PKGBUILD file not found in ${PKGBUILD_DIR}/$pkg_dir"
-            continue
-          fi
-
-          echo "Building package: $pkg_dir"
-          cd "${PKGBUILD_DIR}/$pkg_dir" || exit 1
-
-          # Generate .SRCINFO
-          makepkg --printsrcinfo > .SRCINFO 2>/dev/null || echo "Warning: Failed to generate .SRCINFO"
-
-          # Build the package
-          extra-x86_64-build -- -s
-          if [ $? -ne 0 ]; then
-            echo "Error: Failed to build package $pkg_dir"
-            cd ../../
-            exit 1
-          fi
-          cd ../../
-
-          # Copy to built packages directory
-          if ls "${PKGBUILD_DIR}/$pkg_dir"/*.pkg.tar.zst 1> /dev/null 2>&1; then
-            cp "${PKGBUILD_DIR}/$pkg_dir"/*.pkg.tar.zst built_packages/
-            echo "Successfully copied package for $pkg_dir"
-          else
-            echo "Warning: No package files found for $pkg_dir after build"
-          fi
-        done
-
-        # Check if we actually built any packages
-        if ls built_packages/*.pkg.tar.zst 1> /dev/null 2>&1; then
-          echo "Successfully built packages in built_packages/"
-        else
-          echo "Warning: No packages were built, but changes were detected"
-        fi
-      else
-        echo "No package changes detected - skipping build"
-        # Create empty built_packages directory to satisfy artifact requirement
-        mkdir -p built_packages
-      fi
-  artifacts:
-    paths:
-      - "built_packages/*.pkg.tar.zst"
-    expire_in: 1 day
+workflow:
   rules:
-    - if: "$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH"
-    - if: "$CI_PIPELINE_SOURCE == 'merge_request_event'"
+    - if: $CI_PIPELINE_SOURCE == 'schedule'
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE == 'push'
+    - if: ($CI_PIPELINE_SOURCE == 'push' || $CI_PIPELINE_SOURCE == 'merge_request_event')
+      changes:
+        - website/**/*
+        - .gitlab-ci.yml
+        - packages_id.txt
+        - remote_packages.txt
 
-# Update repository with local and remote packages
-# Update repository with local and remote packages
-update_repository:
-  stage: "update_repo"
+cache:
+  key: "repo-cache-${CI_COMMIT_REF_SLUG}"
+  paths:
+    - "${REPO_DIR}/x86_64/"
+  policy: pull-push
+
+pages:
+  stage: deploy
+  pages: true
+
   before_script:
-    - "pacman -Syu --noconfirm pacman git curl jq"
-    - 'git config user.email "ci@gitlab"'
-    - 'git config user.name "GitLab CI"'
-  script:
-    - |
-      echo "Verifying repository access..."
-      echo "CI_SERVER_HOST: $CI_SERVER_HOST"
-      echo "CI_PROJECT_PATH: $CI_PROJECT_PATH"
+    - pacman -Syu --noconfirm
+    - pacman -S --noconfirm curl jq base-devel git unzip
+    # Install Bun
+    - curl -fsSL https://bun.sh/install | bash
+    # Add Bun to PATH for the current script execution
+    - export PATH="$HOME/.bun/bin:$PATH"
 
-      # Check if the repo branch exists
-      echo "Checking if 'repo' branch exists..."
-      if ! git ls-remote --exit-code --heads "https://gitlab-ci-token:${GITLAB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" repo; then
-        echo "ERROR: The 'repo' branch does not exist in your repository."
-        echo "You need to create it manually with these commands:"
-        echo ""
-        echo "  git clone https://gitlab.com/crystalnetwork-studio/linux/prismlinux/websites/repository.git"
-        echo "  cd repository"
-        echo "  git checkout --orphan repo"
-        echo "  git rm -rf ."
-        echo "  echo 'Arch Linux repository' > README.md"
-        echo "  git add README.md"
-        echo "  git commit -m 'Initial repository'"
-        echo "  git push -u origin repo"
-        echo "  git checkout main"
-        echo ""
-        echo "After creating the branch, retry your pipeline."
-        exit 1
-      fi
+  script: |
+    set -eo pipefail
+    REPO_ARCH_DIR="${REPO_DIR}/x86_64"
 
-      echo "Cloning repo branch: repo"
-      if ! git clone -b repo "https://gitlab-ci-token:${GITLAB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" repo-branch; then
-        echo "ERROR: Failed to clone repo branch. Possible causes:"
-        echo "1. The 'repo' branch exists but is empty (needs at least one commit)"
-        echo "2. Your GITLAB_TOKEN doesn't have sufficient permissions"
-        echo "3. Network issues with GitLab API"
+    echo "Ensuring required directories exist..."
+    mkdir -p "${REPO_ARCH_DIR}"
+    # This directory will hold packages.json, which is needed by the Vue app
+    mkdir -p "${REPO_DIR}/api"
 
-        # Try to diagnose the issue
-        echo "Attempting to fetch branch information..."
-        if git ls-remote --heads "https://gitlab-ci-token:${GITLAB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" repo; then
-          echo "Branch exists but is empty or inaccessible - needs at least one commit"
-          echo "Create a README.md in the branch and push it:"
-          echo "  git checkout repo"
-          echo "  echo 'Arch Linux repository' > README.md"
-          echo "  git add README.md"
-          echo "  git commit -m 'Initialize repo branch'"
-          echo "  git push origin repo"
-        else
-          echo "Branch does not exist or token lacks permissions"
-        fi
+    echo "Cleaning up existing Vue app files in public/ (index.html, assets/)..."
+    # Remove files and directories generated by previous Vue builds to ensure a clean deployment.
+    # This specifically targets index.html and the assets directory, leaving other content intact.
+    rm -f "${REPO_DIR}/index.html" || true
+    rm -rf "${REPO_DIR}/assets" || true
 
-        exit 1
-      fi
-
-      # Verify the directory was actually created
-      if [ ! -d "repo-branch" ]; then
-        echo "ERROR: repo-branch directory was not created despite 'git clone' command"
-        echo "This likely indicates a permissions issue with your GITLAB_TOKEN"
-        echo "Make sure your token has 'api' and 'write_repository' scopes"
-        exit 1
-      fi
-
-      # Create a temporary directory for processing
-      cd ..
-      mkdir -p temp_processing
-      cd temp_processing
-
-      # Copy locally built packages if available
-      if [ -d "../built_packages" ] && ls ../built_packages/*.pkg.tar.zst 1> /dev/null 2>&1; then
-        echo "Copying locally built packages"
-        cp ../built_packages/*.pkg.tar.zst . 2>/dev/null || true
-      else
-        echo "No locally built packages to copy"
-      fi
-
-      # --- Process remote HTTPS packages ---
-      declare -A remote_packages_map
-      if [ -f "../${PKGBUILD_DIR}/remote_packages.txt" ]; then
-        echo "Reading remote package URLs from remote_packages.txt..."
+    # --- Handle Remote HTTPS Packages ---
+    declare -A remote_packages_map
+    echo "Reading remote package URLs from remote_packages.txt..."
+    if [ -f remote_packages.txt ]; then
         while IFS= read -r url; do
-          # Skip empty lines and comments
-          [[ -z "$url" || "$url" =~ ^[[:space:]]*# ]] && continue
-          # Basic check if it looks like a URL ending in .pkg.tar.zst
-          if [[ "$url" =~ \.pkg\.tar\.zst(\?[^[:space:]]*)?$ ]]; then
-            filename=$(basename "$url" | cut -d'?' -f1)
-            if [[ -n "$filename" ]]; then
-              echo "  -> Adding remote package: $filename from $url"
-              remote_packages_map["$filename"]="$url"
+            # Skip empty lines and comments starting with #
+            [[ -z "$url" || "$url" =~ ^[[:space:]]*# ]] && continue
+            # Basic check if it looks like a URL ending in .pkg.tar.zst
+            if [[ "$url" =~ \.pkg\.tar\.zst(\?[^[:space:]]*)?$ ]]; then
+                # Use the filename part of the URL as the key
+                filename=$(basename "$url" | cut -d'?' -f1) # Remove potential query parameters for filename key
+                if [[ -n "$filename" ]]; then
+                    echo "  -> Adding remote package: $filename from $url"
+                    remote_packages_map["$filename"]="$url"
+                else
+                    echo "    WARNING: Could not determine filename from URL: $url"
+                fi
+            else
+                echo "    WARNING: Skipping line (not a .pkg.tar.zst URL): $url"
             fi
-          fi
-        done < "../${PKGBUILD_DIR}/remote_packages.txt"
+        done < remote_packages.txt
+    else
+        echo "INFO: remote_packages.txt not found. No remote HTTPS packages to process."
+    fi
+
+    echo "Fetching list of all available remote packages from GitLab releases..."
+
+    # Read project IDs from the file, ignore comments and empty lines
+    if [ ! -f packages_id.txt ]; then
+      echo "ERROR: packages_id.txt not found!"
+      exit 1
+    fi
+
+    PROJECT_IDS_TO_PROCESS=$(grep -vE '^\s*#|^\s*$' packages_id.txt | awk '{print $1}' | tr '\n' ' ')
+    echo "Processing Project IDs: ${PROJECT_IDS_TO_PROCESS}"
+
+    # --- Fetch from GitLab Releases ---
+    # This loop now populates the same remote_packages_map declared above
+    for project_id in $PROJECT_IDS_TO_PROCESS; do
+      RELEASES_API_URL="https://gitlab.com/api/v4/projects/${project_id}/releases" # Fixed spacing
+      LATEST_RELEASE=$(curl --silent --show-error --header "PRIVATE-TOKEN: $GITLAB_TOKEN" "$RELEASES_API_URL" | jq -r '.[0]')
+
+      if [ "$LATEST_RELEASE" = "null" ]; then
+        echo "WARNING: No releases found for project ${project_id}. Skipping."
+        continue
       fi
 
-      # --- Process GitLab project packages ---
-      if [ -f "../${PKGBUILD_DIR}/packages_id.txt" ]; then
-        echo "Reading project IDs from packages_id.txt..."
-        while IFS= read -r project_line; do
-          # Skip empty lines and comments
-          [[ -z "$project_line" || "$project_line" =~ ^[[:space:]]*# ]] && continue
+      while IFS= read -r asset; do
+        if [ -z "$asset" ]; then continue; fi
+        ASSET_URL=$(echo "$asset" | jq -r '.url')
+        ASSET_NAME=$(echo "$asset" | jq -r '.name')
 
-          # Extract just the project ID (first word) and ignore comments
-          project_id=$(echo "$project_line" | awk '{print $1}')
-
-          # Skip if project_id is empty after processing
-          if [ -z "$project_id" ]; then
-            continue
-          fi
-
-          echo "Fetching latest release from project ${project_id}..."
-          RELEASES_API_URL="https://gitlab.com/api/v4/projects/${project_id}/releases"
-          LATEST_RELEASE=$(curl --silent --show-error --header "PRIVATE-TOKEN: $GITLAB_TOKEN" "$RELEASES_API_URL" | jq -r '.[0]')
-
-          if [ "$LATEST_RELEASE" = "null" ]; then
-            echo "WARNING: No releases found for project ${project_id}. Skipping."
-            continue
-          fi
-
-          # Process all assets in the release
-          echo "$LATEST_RELEASE" | jq -c '.assets.links[]?' | while read -r asset; do
-            if [ -z "$asset" ] || [ "$asset" = "null" ]; then continue; fi
-
-            ASSET_URL=$(echo "$asset" | jq -r '.url')
-            ASSET_NAME=$(echo "$asset" | jq -r '.name')
-
-            # Check if the asset is a package file
-            if [[ "$ASSET_NAME" == *.pkg.tar.zst ]]; then
+        # Check if the asset name ends with .pkg.tar.zst
+        if [[ "$ASSET_NAME" == *.pkg.tar.zst ]]; then
+           # Check if the URL looks like a direct download (contains /downloads/ or similar pattern)
+           # GitLab release asset URLs are typically direct download links
+           # You might need to adjust this check based on actual URLs
+           if [[ "$ASSET_URL" == https://* ]]; then
               echo "  -> Adding GitLab package: ${ASSET_NAME} from ${ASSET_URL}"
               remote_packages_map["${ASSET_NAME}"]="${ASSET_URL}"
-            fi
-          done
-        done < "../${PKGBUILD_DIR}/packages_id.txt"
-      fi
-
-      # Download remote packages
-      echo "Downloading remote packages..."
-      for pkg_filename in "${!remote_packages_map[@]}"; do
-        if [ ! -f "$pkg_filename" ]; then
-          echo "  -> Downloading: $pkg_filename"
-          DOWNLOAD_URL="${remote_packages_map[$pkg_filename]}"
-          if ! curl --location --silent --show-error --fail --output "$pkg_filename" "${DOWNLOAD_URL}"; then
-            echo "    ERROR: Failed to download $pkg_filename from $DOWNLOAD_URL"
-            rm -f "$pkg_filename"
-          fi
+           else
+              echo "    WARNING: Skipping GitLab asset ${ASSET_NAME}, URL doesn't look like HTTPS direct link: ${ASSET_URL}"
+           fi
         fi
-      done
+      done <<< "$(echo "$LATEST_RELEASE" | jq -c '.assets.links[]?')"
+    done
 
-      # Clean up orphaned packages (packages that are no longer referenced)
-      echo "Checking for orphaned packages in repository..."
-      cd repo-branch
-
-      # Check if we have any packages in the repository
-      if ! ls *.pkg.tar.zst 1> /dev/null 2>&1; then
-        echo "No packages found in repository branch"
+    echo "Checking for orphaned packages in local repository..."
+    for local_pkg_path in "${REPO_ARCH_DIR}"/*.pkg.tar.zst; do
+      [ -f "$local_pkg_path" ] || continue
+      local_pkg_filename=$(basename "$local_pkg_path")
+      # Check against the combined map (GitLab + HTTPS)
+      if [[ ! -v remote_packages_map["${local_pkg_filename}"] ]]; then
+        echo "  -> Removing orphaned package: ${local_pkg_filename}"
+        rm "$local_pkg_path"
       fi
+    done
 
-      for local_pkg_path in *.pkg.tar.zst; do
-        [ -f "$local_pkg_path" ] || continue
-        local_pkg_filename=$(basename "$local_pkg_path")
-
-        # Check if this package is still referenced (either locally built or in remote lists)
-        package_exists=false
-
-        # Check if it's in locally built packages
-        if [ -f "../temp_processing/$local_pkg_filename" ]; then
-          package_exists=true
-        else
-          # Check if it's in remote packages map
-          while read -r url; do
-            [[ -z "$url" || "$url" =~ ^[[:space:]]*# ]] && continue
-            if [[ "$url" =~ \.pkg\.tar\.zst(\?[^[:space:]]*)?$ ]]; then
-              filename=$(basename "$url" | cut -d'?' -f1)
-              if [ "$filename" = "$local_pkg_filename" ]; then
-                package_exists=true
-                break
-              fi
-            fi
-          done < "../${PKGBUILD_DIR}/remote_packages.txt" 2>/dev/null || true
-
-          # Check if it's from GitLab projects
-          if [ "$package_exists" = false ] && [ -f "../${PKGBUILD_DIR}/packages_id.txt" ]; then
-            while IFS= read -r project_line; do
-              [[ -z "$project_line" || "$project_line" =~ ^[[:space:]]*# ]] && continue
-
-              # Extract just the project ID (first word)
-              project_id=$(echo "$project_line" | awk '{print $1}')
-
-              RELEASES_API_URL="https://gitlab.com/api/v4/projects/${project_id}/releases"
-              LATEST_RELEASE=$(curl --silent --show-error --header "PRIVATE-TOKEN: $GITLAB_TOKEN" "$RELEASES_API_URL" | jq -r '.[0]')
-
-              if [ "$LATEST_RELEASE" != "null" ]; then
-                echo "$LATEST_RELEASE" | jq -c '.assets.links[]?' | while read -r asset; do
-                  if [ -z "$asset" ] || [ "$asset" = "null" ]; then continue; fi
-
-                  ASSET_NAME=$(echo "$asset" | jq -r '.name')
-                  if [ "$ASSET_NAME" = "$local_pkg_filename" ]; then
-                    package_exists=true
-                    break 2
-                  fi
-                done
-              fi
-            done < "../${PKGBUILD_DIR}/packages_id.txt" 2>/dev/null || true
-          fi
+    echo "Checking for new packages to download..."
+    for pkg_filename in "${!remote_packages_map[@]}"; do
+      if [ ! -f "${REPO_ARCH_DIR}/${pkg_filename}" ]; then
+        echo "  -> Downloading new package: ${pkg_filename}"
+        DOWNLOAD_URL="${remote_packages_map[$pkg_filename]}"
+        if ! curl --location --silent --show-error --fail --output "${REPO_ARCH_DIR}/${pkg_filename}" "${DOWNLOAD_URL}"; then
+          echo "    ERROR: Failed to download ${pkg_filename} from ${DOWNLOAD_URL}"
+          rm -f "${REPO_ARCH_DIR}/${pkg_filename}" # Cleanup failed download
         fi
-
-        # Remove orphaned package
-        if [ "$package_exists" = false ]; then
-          echo "  -> Removing orphaned package: $local_pkg_filename"
-          rm -f "$local_pkg_path"
-        fi
-      done
-
-      # Copy new packages to repository
-      cd ..
-      if [ -d "temp_processing" ] && ls temp_processing/*.pkg.tar.zst 1> /dev/null 2>&1; then
-        echo "Copying new packages to repository"
-        cp temp_processing/*.pkg.tar.zst repo-branch/
-      else
-        echo "No new packages to copy to repository"
       fi
+    done
 
-      # Update repository database
-      cd repo-branch
-      echo "Updating repository database..."
 
-      # Remove old database files
+    echo "Updating repository database..."
+    (
+      cd "${REPO_ARCH_DIR}"
+
       rm -f ${REPO_NAME}.db ${REPO_NAME}.db.tar.gz ${REPO_NAME}.files ${REPO_NAME}.files.tar.gz
 
-      # Create new database
-      if ls *.pkg.tar.zst 1> /dev/null 2>&1; then
-        repo-add ${REPO_NAME}.db.tar.gz *.pkg.tar.zst
-        if [ $? -ne 0 ]; then
-          echo "Warning: repo-add failed, trying with individual packages"
-          for pkg in *.pkg.tar.zst; do
-            repo-add ${REPO_NAME}.db.tar.gz "$pkg" || echo "Failed to add $pkg to repository"
-          done
-        fi
+      if ls ./*.pkg.tar.zst 1> /dev/null 2>&1; then
+        echo "Found packages. Rebuilding repository database..."
+        repo-add "${REPO_NAME}.db.tar.gz" *.pkg.tar.zst
       else
         echo "No packages found in repository. The database will be empty."
         touch "${REPO_NAME}.db.tar.gz" "${REPO_NAME}.files.tar.gz"
       fi
 
-      # Create symlinks for compatibility
-      ln -sf ${REPO_NAME}.db.tar.gz ${REPO_NAME}.db
-      ln -sf ${REPO_NAME}.files.tar.gz ${REPO_NAME}.files
+      echo "Ensuring database files are compatible with static hosting..."
+      ln -sf "${REPO_NAME}.db.tar.gz" "${REPO_NAME}.db"
+      ln -sf "${REPO_NAME}.files.tar.gz" "${REPO_NAME}.files"
+    )
 
-      # Prepare commit
-      git add .
-      git commit -m "Updated repository [skip ci]" || exit 0
+    echo "Generating package metadata for web interface (packages.json)..."
+    generate_json_objects() {
+      for pkg_file in "${REPO_ARCH_DIR}"/*.pkg.tar.zst; do
+        [ -f "$pkg_file" ] || continue
+        pkg_info=$(pacman -Qip "$pkg_file" 2>/dev/null)
 
-      # Push using the personal access token
-      git push "https://gitlab-ci-token:${GITLAB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" repo
-  dependencies:
-    - "build_changed_packages"
-  rules:
-    - if: "$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH"
-    - if: "$CI_PIPELINE_SOURCE == 'merge_request_event'"
+        jq -cn \
+          --arg name "$(echo "$pkg_info" | grep -m1 "^Name" | sed 's/Name\s*:\s*//')" \
+          --arg version "$(echo "$pkg_info" | grep -m1 "^Version" | sed 's/Version\s*:\s*//')" \
+          --arg desc "$(echo "$pkg_info" | grep -m1 "^Description" | sed 's/Description\s*:\s*//')" \
+          --arg arch "$(echo "$pkg_info" | grep -m1 "^Architecture" | sed 's/Architecture\s*:\s*//')" \
+          --arg filename "$(basename "$pkg_file")" \
+          --arg size "$(ls -lh "$pkg_file" | awk '{print $5}')" \
+          --arg modified "$(date -r "$pkg_file" '+%Y-%m-%d %H:%M:%S')" \
+          --arg depends "$(echo "$pkg_info" | grep -m1 "^Depends On" | sed 's/Depends On\s*:\s*//' || echo 'None')" \
+          --arg groups "$(echo "$pkg_info" | grep -m1 "^Groups" | sed 's/Groups\s*:\s*//' || echo 'None')" \
+          '{name: $name, version: $version, description: $desc, architecture: $arch, filename: $filename, size: $size, modified: $modified, depends: $depends, groups: $groups}'
+      done
+    }
+    generate_json_objects | jq -s . > "${REPO_DIR}/api/packages.json"
 
-# Deploy web interface
-deploy_web_interface:
-  stage: "deploy"
-  before_script:
-    - "pacman -Syu --noconfirm curl base-devel git"
-    # Install Bun
-    - "curl -fsSL https://bun.sh/install | bash"
-    - 'export PATH="$HOME/.bun/bin:$PATH"'
-  script:
-    - |
-      # Create structure for GitLab Pages
-      mkdir -p public/api
-
-      # Clone the repo branch to get package information
-      git clone -b repo "https://gitlab-ci-token:${GITLAB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" repo-branch
-
-      # Generate JSON with package information
-      echo "Generating packages.json..."
-      generate_package_json() {
-        cd repo-branch
-        for pkg in *.pkg.tar.zst; do
-          [ -f "$pkg" ] || continue
-          pkg_info=$(pacman -Qip "$pkg" 2>/dev/null)
-
-          jq -cn \
-            --arg name "$(echo "$pkg_info" | grep -m1 "^Name" | sed 's/Name\s*:\s*//')" \
-            --arg version "$(echo "$pkg_info" | grep -m1 "^Version" | sed 's/Version\s*:\s*//')" \
-            --arg desc "$(echo "$pkg_info" | grep -m1 "^Description" | sed 's/Description\s*:\s*//')" \
-            --arg arch "$(echo "$pkg_info" | grep -m1 "^Architecture" | sed 's/Architecture\s*:\s*//')" \
-            --arg filename "$pkg" \
-            --arg size "$(ls -lh "$pkg" | awk '{print $5}')" \
-            --arg modified "$(date -r "$pkg" '+%Y-%m-%d %H:%M:%S')" \
-            '{name: $name, version: $version, description: $desc, architecture: $arch, filename: $filename, size: $size, modified: $modified}'
-        done
-      }
-
-      generate_package_json | jq -s . > public/api/packages.json
-
-      # Build Vue application
-      echo "Building Vue application..."
+    echo "Building Vue frontend with Bun..."
+    (
       cd website
       bun install --frozen-lockfile
       bun run build
-      cp -r dist/* ../public/
+    )
 
-      # Add repository information to index.html
-      sed -i "s|REPO_SERVER|https://$CI_PROJECT_ROOT_NAMESPACE.gitlab.io/$CI_PROJECT_NAME|" public/index.html
-  dependencies:
-    - "update_repository"
+    echo "Copying built Vue app from website/dist to public directory..."
+    cp -r website/dist/. "${REPO_DIR}/"
+
+    echo "-----------------------------------------"
+    echo "Final check before artifact upload:"
+    ls -laR public
+    echo "-----------------------------------------"
+
   artifacts:
     paths:
-      - "public"
-  rules:
-    - if: "$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH"
+      - public
