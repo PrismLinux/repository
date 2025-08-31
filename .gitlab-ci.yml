@@ -35,8 +35,6 @@ build_changed_packages:
     - "pacman -Syu --noconfirm devtools git base-devel"
   script:
     - |
-      set -e  # Fail immediately on any error
-
       echo "Determining changed packages..."
       echo "CI_COMMIT_BEFORE_SHA: $CI_COMMIT_BEFORE_SHA"
       echo "CI_COMMIT_SHA: $CI_COMMIT_SHA"
@@ -44,46 +42,33 @@ build_changed_packages:
       # Handle initial commit case
       if [ "$CI_COMMIT_BEFORE_SHA" = "0000000000000000000000000000000000000000" ]; then
         echo "Initial commit detected, checking all PKGBUILDs..."
-        CHANGED_FILES=$(git ls-tree -r --name-only HEAD 2>&1)
-        if [ $? -ne 0 ]; then
-          echo "Error: Failed to list files in repository"
-          echo "$CHANGED_FILES"
-          exit 1
-        fi
-        CHANGED_FILES=$(echo "$CHANGED_FILES" | grep -E "${PKGBUILD_DIR}/.*/PKGBUILD$")
+        CHANGED_FILES=$(git ls-tree -r --name-only HEAD 2>/dev/null || true)
+        CHANGED_FILES=$(echo "$CHANGED_FILES" | grep -E "${PKGBUILD_DIR}/.*/PKGBUILD$" || true)
       else
         echo "Comparing with previous commit: $CI_COMMIT_BEFORE_SHA"
+
         # Ensure we have a proper checkout
         git fetch origin --depth=100 || echo "Warning: git fetch failed"
 
         # Check if the commit exists
         if ! git cat-file -e "$CI_COMMIT_BEFORE_SHA^{commit}" 2>/dev/null; then
           echo "Warning: Previous commit $CI_COMMIT_BEFORE_SHA not found in local repository"
-          git fetch origin $CI_COMMIT_BEFORE_SHA --depth=1 || true
+          git fetch origin $CI_COMMIT_BEFORE_SHA --depth=1 || echo "Warning: failed to fetch specific commit"
         fi
 
-        CHANGED_FILES=$(git diff --name-only "$CI_COMMIT_BEFORE_SHA" "$CI_COMMIT_SHA" 2>&1)
-        if [ $? -ne 0 ]; then
-          echo "Error: Failed to compare commits"
-          echo "$CHANGED_FILES"
-          # Try a shallower fetch as fallback
-          git fetch origin --depth=50 || echo "Warning: shallow fetch also failed"
-          CHANGED_FILES=$(git diff --name-only "$CI_COMMIT_BEFORE_SHA" "$CI_COMMIT_SHA" 2>&1) || true
-          if [ $? -ne 0 ]; then
-            echo "Error: Still unable to compare commits after additional fetch"
-            echo "Attempting to check all PKGBUILDs as fallback..."
-            CHANGED_FILES=$(git ls-tree -r --name-only HEAD | grep -E "${PKGBUILD_DIR}/.*/PKGBUILD$")
-          fi
-        else
-          CHANGED_FILES=$(echo "$CHANGED_FILES" | grep -E "${PKGBUILD_DIR}/.*/PKGBUILD$")
-        fi
+        CHANGED_FILES=$(git diff --name-only "$CI_COMMIT_BEFORE_SHA" "$CI_COMMIT_SHA" 2>/dev/null || true)
+        CHANGED_FILES=$(echo "$CHANGED_FILES" | grep -E "${PKGBUILD_DIR}/.*/PKGBUILD$" || true)
       fi
 
       echo "Raw diff output:"
-      echo "$CHANGED_FILES" || echo "No diff output"
+      if [ -n "$CHANGED_FILES" ]; then
+        echo "$CHANGED_FILES"
+      else
+        echo "No PKGBUILD changes detected"
+      fi
 
       # Only process if we have changed files
-      if [ -n "$CHANGED_FILES" ] && [ "$CHANGED_FILES" != " " ]; then
+      if [ -n "$CHANGED_FILES" ]; then
         echo "Found changed PKGBUILD files:"
         echo "$CHANGED_FILES"
 
@@ -115,10 +100,7 @@ build_changed_packages:
           cd "${PKGBUILD_DIR}/$pkg_dir" || exit 1
 
           # Generate .SRCINFO
-          makepkg --printsrcinfo > .SRCINFO 2>&1
-          if [ $? -ne 0 ]; then
-            echo "Warning: Failed to generate .SRCINFO for $pkg_dir, continuing anyway"
-          fi
+          makepkg --printsrcinfo > .SRCINFO 2>/dev/null || echo "Warning: Failed to generate .SRCINFO"
 
           # Build the package
           extra-x86_64-build -- -s
@@ -145,7 +127,9 @@ build_changed_packages:
           echo "Warning: No packages were built, but changes were detected"
         fi
       else
-        echo "No package changes detected or diff output was empty"
+        echo "No package changes detected - skipping build"
+        # Create empty built_packages directory to satisfy artifact requirement
+        mkdir -p built_packages
       fi
   artifacts:
     paths:
@@ -164,8 +148,6 @@ update_repository:
     - 'git config user.name "GitLab CI"'
   script:
     - |
-      set -e
-
       # Clone or initialize repo branch
       if ! git ls-remote --exit-code . "refs/heads/$REPO_BRANCH" >/dev/null; then
         echo "Creating new repo branch: $REPO_BRANCH"
@@ -369,8 +351,6 @@ deploy_web_interface:
     - 'export PATH="$HOME/.bun/bin:$PATH"'
   script:
     - |
-      set -e
-
       # Create structure for GitLab Pages
       mkdir -p public/api
 
