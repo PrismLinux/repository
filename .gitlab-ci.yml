@@ -185,9 +185,17 @@ update_repository:
       # --- Process GitLab project packages ---
       if [ -f "../${PKGBUILD_DIR}/packages_id.txt" ]; then
         echo "Reading project IDs from packages_id.txt..."
-        while IFS= read -r project_id; do
+        while IFS= read -r project_line; do
           # Skip empty lines and comments
-          [[ -z "$project_id" || "$project_id" =~ ^[[:space:]]*# ]] && continue
+          [[ -z "$project_line" || "$project_line" =~ ^[[:space:]]*# ]] && continue
+
+          # Extract just the project ID (first word) and ignore comments
+          project_id=$(echo "$project_line" | awk '{print $1}')
+
+          # Skip if project_id is empty after processing
+          if [ -z "$project_id" ]; then
+            continue
+          fi
 
           echo "Fetching latest release from project ${project_id}..."
           RELEASES_API_URL="https://gitlab.com/api/v4/projects/${project_id}/releases"
@@ -255,8 +263,11 @@ update_repository:
 
           # Check if it's from GitLab projects
           if [ "$package_exists" = false ] && [ -f "../${PKGBUILD_DIR}/packages_id.txt" ]; then
-            while IFS= read -r project_id; do
-              [[ -z "$project_id" || "$project_id" =~ ^[[:space:]]*# ]] && continue
+            while IFS= read -r project_line; do
+              [[ -z "$project_line" || "$project_line" =~ ^[[:space:]]*# ]] && continue
+
+              # Extract just the project ID (first word)
+              project_id=$(echo "$project_line" | awk '{print $1}')
 
               RELEASES_API_URL="https://gitlab.com/api/v4/projects/${project_id}/releases"
               LATEST_RELEASE=$(curl --silent --show-error --header "PRIVATE-TOKEN: $GITLAB_TOKEN" "$RELEASES_API_URL" | jq -r '.[0]')
