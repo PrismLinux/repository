@@ -154,7 +154,7 @@ update_repository:
 
       # Check if the repo branch exists
       echo "Checking if 'repo' branch exists..."
-      if ! git ls-remote --exit-code --heads "https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" repo; then
+      if ! git ls-remote --exit-code --heads "https://gitlab-ci-token:${GITLAB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" repo; then
         echo "ERROR: The 'repo' branch does not exist in your repository."
         echo "You need to create it manually with these commands:"
         echo ""
@@ -173,15 +173,15 @@ update_repository:
       fi
 
       echo "Cloning repo branch: repo"
-      if ! git clone -b repo "https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" repo-branch; then
+      if ! git clone -b repo "https://gitlab-ci-token:${GITLAB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" repo-branch; then
         echo "ERROR: Failed to clone repo branch. Possible causes:"
         echo "1. The 'repo' branch exists but is empty (needs at least one commit)"
-        echo "2. Your CI_JOB_TOKEN doesn't have sufficient permissions"
+        echo "2. Your GITLAB_TOKEN doesn't have sufficient permissions"
         echo "3. Network issues with GitLab API"
 
         # Try to diagnose the issue
         echo "Attempting to fetch branch information..."
-        if git ls-remote --heads "https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" repo; then
+        if git ls-remote --heads "https://gitlab-ci-token:${GITLAB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" repo; then
           echo "Branch exists but is empty or inaccessible - needs at least one commit"
           echo "Create a README.md in the branch and push it:"
           echo "  git checkout repo"
@@ -199,7 +199,7 @@ update_repository:
       # Verify the directory was actually created
       if [ ! -d "repo-branch" ]; then
         echo "ERROR: repo-branch directory was not created despite 'git clone' command"
-        echo "This likely indicates a permissions issue with your CI_JOB_TOKEN"
+        echo "This likely indicates a permissions issue with your GITLAB_TOKEN"
         echo "Make sure your token has 'api' and 'write_repository' scopes"
         exit 1
       fi
@@ -413,7 +413,7 @@ deploy_web_interface:
       mkdir -p public/api
 
       # Clone the repo branch to get package information
-      git clone -b repo "https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" repo-branch
+      git clone -b repo "https://gitlab-ci-token:${GITLAB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" repo-branch
 
       # Generate JSON with package information
       echo "Generating packages.json..."
