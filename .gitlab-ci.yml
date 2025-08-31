@@ -139,6 +139,7 @@ build_changed_packages:
     - if: "$CI_PIPELINE_SOURCE == 'merge_request_event'"
 
 # Update repository with local and remote packages
+# Update repository with local and remote packages
 update_repository:
   stage: "update_repo"
   before_script:
@@ -147,18 +148,53 @@ update_repository:
     - 'git config user.name "GitLab CI"'
   script:
     - |
-      echo "Cloning repo branch: repo"
-      # Add error checking to the git clone command
-      if ! git clone -b repo "https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" repo-branch; then
-        echo "ERROR: Failed to clone repo branch. Verify that the 'repo' branch exists in your repository."
-        echo "You can check with: git ls-remote --heads origin repo"
-        echo "If it doesn't exist, create it manually with:"
+      echo "Verifying repository access..."
+      echo "CI_SERVER_HOST: $CI_SERVER_HOST"
+      echo "CI_PROJECT_PATH: $CI_PROJECT_PATH"
+      echo "CI_JOB_TOKEN: [MASKED]"
+
+      echo "Checking if repo branch exists..."
+      if ! git ls-remote --exit-code --heads "https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" repo; then
+        echo "ERROR: The 'repo' branch does not exist in your repository."
+        echo "You need to create it manually with these commands:"
+        echo ""
+        echo "  git clone https://gitlab.com/crystalnetwork-studio/linux/prismlinux/websites/repository.git"
+        echo "  cd repository"
         echo "  git checkout --orphan repo"
         echo "  git rm -rf ."
         echo "  echo 'Arch Linux repository' > README.md"
         echo "  git add README.md"
         echo "  git commit -m 'Initial repository'"
         echo "  git push -u origin repo"
+        echo "  git checkout main"
+        echo ""
+        echo "After creating the branch, retry your pipeline."
+        exit 1
+      fi
+
+      echo "Cloning repo branch: repo"
+      if ! git clone -b repo "https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" repo-branch; then
+        echo "ERROR: Failed to clone repo branch. Possible causes:"
+        echo "1. The 'repo' branch exists but is empty (needs at least one commit)"
+        echo "2. Your GITLAB_TOKEN doesn't have sufficient permissions"
+        echo "3. Network issues with GitLab API"
+
+        # Try to diagnose the issue
+        echo "Attempting to fetch branch information..."
+        if git ls-remote --heads "https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" repo; then
+          echo "Branch exists but is empty or inaccessible - needs at least one commit"
+        else
+          echo "Branch does not exist or token lacks permissions"
+        fi
+
+        exit 1
+      fi
+
+      # Verify the directory was actually created
+      if [ ! -d "repo-branch" ]; then
+        echo "ERROR: repo-branch directory was not created despite 'git clone' command"
+        echo "This likely indicates a permissions issue with your GITLAB_TOKEN"
+        echo "Make sure your token has 'api' and 'write_repository' scopes"
         exit 1
       fi
 
