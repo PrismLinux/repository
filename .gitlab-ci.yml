@@ -30,6 +30,7 @@ workflow:
         - website/**/*
         - .gitlab-ci.yml
         - packages_id.txt
+        - remote_packages.txt
 
 cache:
   key: "repo-cache-${CI_COMMIT_REF_SLUG}"
@@ -64,8 +65,32 @@ pages:
     rm -f "${REPO_DIR}/index.html" || true
     rm -rf "${REPO_DIR}/assets" || true
 
+    # --- Handle Remote HTTPS Packages ---
     declare -A remote_packages_map
-    echo "Fetching list of all available remote packages from releases..."
+    echo "Reading remote package URLs from remote_packages.txt..."
+    if [ -f remote_packages.txt ]; then
+        while IFS= read -r url; do
+            # Skip empty lines and comments starting with #
+            [[ -z "$url" || "$url" =~ ^[[:space:]]*# ]] && continue
+            # Basic check if it looks like a URL ending in .pkg.tar.zst
+            if [[ "$url" =~ \.pkg\.tar\.zst(\?[^[:space:]]*)?$ ]]; then
+                # Use the filename part of the URL as the key
+                filename=$(basename "$url" | cut -d'?' -f1) # Remove potential query parameters for filename key
+                if [[ -n "$filename" ]]; then
+                    echo "  -> Adding remote package: $filename from $url"
+                    remote_packages_map["$filename"]="$url"
+                else
+                    echo "    WARNING: Could not determine filename from URL: $url"
+                fi
+            else
+                echo "    WARNING: Skipping line (not a .pkg.tar.zst URL): $url"
+            fi
+        done < remote_packages.txt
+    else
+        echo "INFO: remote_packages.txt not found. No remote HTTPS packages to process."
+    fi
+
+    echo "Fetching list of all available remote packages from GitLab releases..."
 
     # Read project IDs from the file, ignore comments and empty lines
     if [ ! -f packages_id.txt ]; then
@@ -76,8 +101,10 @@ pages:
     PROJECT_IDS_TO_PROCESS=$(grep -vE '^\s*#|^\s*$' packages_id.txt | awk '{print $1}' | tr '\n' ' ')
     echo "Processing Project IDs: ${PROJECT_IDS_TO_PROCESS}"
 
+    # --- Fetch from GitLab Releases ---
+    # This loop now populates the same remote_packages_map declared above
     for project_id in $PROJECT_IDS_TO_PROCESS; do
-      RELEASES_API_URL="https://gitlab.com/api/v4/projects/${project_id}/releases"
+      RELEASES_API_URL="https://gitlab.com/api/v4/projects/${project_id}/releases" # Fixed spacing
       LATEST_RELEASE=$(curl --silent --show-error --header "PRIVATE-TOKEN: $GITLAB_TOKEN" "$RELEASES_API_URL" | jq -r '.[0]')
 
       if [ "$LATEST_RELEASE" = "null" ]; then
@@ -90,8 +117,17 @@ pages:
         ASSET_URL=$(echo "$asset" | jq -r '.url')
         ASSET_NAME=$(echo "$asset" | jq -r '.name')
 
+        # Check if the asset name ends with .pkg.tar.zst
         if [[ "$ASSET_NAME" == *.pkg.tar.zst ]]; then
-          remote_packages_map["${ASSET_NAME}"]="${ASSET_URL}"
+           # Check if the URL looks like a direct download (contains /downloads/ or similar pattern)
+           # GitLab release asset URLs are typically direct download links
+           # You might need to adjust this check based on actual URLs
+           if [[ "$ASSET_URL" == https://* ]]; then
+              echo "  -> Adding GitLab package: ${ASSET_NAME} from ${ASSET_URL}"
+              remote_packages_map["${ASSET_NAME}"]="${ASSET_URL}"
+           else
+              echo "    WARNING: Skipping GitLab asset ${ASSET_NAME}, URL doesn't look like HTTPS direct link: ${ASSET_URL}"
+           fi
         fi
       done <<< "$(echo "$LATEST_RELEASE" | jq -c '.assets.links[]?')"
     done
@@ -100,6 +136,7 @@ pages:
     for local_pkg_path in "${REPO_ARCH_DIR}"/*.pkg.tar.zst; do
       [ -f "$local_pkg_path" ] || continue
       local_pkg_filename=$(basename "$local_pkg_path")
+      # Check against the combined map (GitLab + HTTPS)
       if [[ ! -v remote_packages_map["${local_pkg_filename}"] ]]; then
         echo "  -> Removing orphaned package: ${local_pkg_filename}"
         rm "$local_pkg_path"
@@ -111,12 +148,13 @@ pages:
       if [ ! -f "${REPO_ARCH_DIR}/${pkg_filename}" ]; then
         echo "  -> Downloading new package: ${pkg_filename}"
         DOWNLOAD_URL="${remote_packages_map[$pkg_filename]}"
-        if ! curl --location --silent --show-error --fail --header "PRIVATE-TOKEN: $GITLAB_TOKEN" --output "${REPO_ARCH_DIR}/${pkg_filename}" "${DOWNLOAD_URL}"; then
+        if ! curl --location --silent --show-error --fail --output "${REPO_ARCH_DIR}/${pkg_filename}" "${DOWNLOAD_URL}"; then
           echo "    ERROR: Failed to download ${pkg_filename} from ${DOWNLOAD_URL}"
-          rm -f "${REPO_ARCH_DIR}/${pkg_filename}"
+          rm -f "${REPO_ARCH_DIR}/${pkg_filename}" # Cleanup failed download
         fi
       fi
     done
+
 
     echo "Updating repository database..."
     (
