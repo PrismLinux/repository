@@ -151,9 +151,9 @@ update_repository:
       echo "Verifying repository access..."
       echo "CI_SERVER_HOST: $CI_SERVER_HOST"
       echo "CI_PROJECT_PATH: $CI_PROJECT_PATH"
-      echo "CI_JOB_TOKEN: [MASKED]"
 
-      echo "Checking if repo branch exists..."
+      # Check if the repo branch exists
+      echo "Checking if 'repo' branch exists..."
       if ! git ls-remote --exit-code --heads "https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" repo; then
         echo "ERROR: The 'repo' branch does not exist in your repository."
         echo "You need to create it manually with these commands:"
@@ -176,13 +176,19 @@ update_repository:
       if ! git clone -b repo "https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" repo-branch; then
         echo "ERROR: Failed to clone repo branch. Possible causes:"
         echo "1. The 'repo' branch exists but is empty (needs at least one commit)"
-        echo "2. Your GITLAB_TOKEN doesn't have sufficient permissions"
+        echo "2. Your CI_JOB_TOKEN doesn't have sufficient permissions"
         echo "3. Network issues with GitLab API"
 
         # Try to diagnose the issue
         echo "Attempting to fetch branch information..."
         if git ls-remote --heads "https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" repo; then
           echo "Branch exists but is empty or inaccessible - needs at least one commit"
+          echo "Create a README.md in the branch and push it:"
+          echo "  git checkout repo"
+          echo "  echo 'Arch Linux repository' > README.md"
+          echo "  git add README.md"
+          echo "  git commit -m 'Initialize repo branch'"
+          echo "  git push origin repo"
         else
           echo "Branch does not exist or token lacks permissions"
         fi
@@ -193,7 +199,7 @@ update_repository:
       # Verify the directory was actually created
       if [ ! -d "repo-branch" ]; then
         echo "ERROR: repo-branch directory was not created despite 'git clone' command"
-        echo "This likely indicates a permissions issue with your GITLAB_TOKEN"
+        echo "This likely indicates a permissions issue with your CI_JOB_TOKEN"
         echo "Make sure your token has 'api' and 'write_repository' scopes"
         exit 1
       fi
