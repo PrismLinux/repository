@@ -148,8 +148,19 @@ update_repository:
   script:
     - |
       echo "Cloning repo branch: repo"
-      git clone -b repo "https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" repo-branch
-      cd repo-branch
+      # Add error checking to the git clone command
+      if ! git clone -b repo "https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" repo-branch; then
+        echo "ERROR: Failed to clone repo branch. Verify that the 'repo' branch exists in your repository."
+        echo "You can check with: git ls-remote --heads origin repo"
+        echo "If it doesn't exist, create it manually with:"
+        echo "  git checkout --orphan repo"
+        echo "  git rm -rf ."
+        echo "  echo 'Arch Linux repository' > README.md"
+        echo "  git add README.md"
+        echo "  git commit -m 'Initial repository'"
+        echo "  git push -u origin repo"
+        exit 1
+      fi
 
       # Create a temporary directory for processing
       cd ..
@@ -238,6 +249,12 @@ update_repository:
       # Clean up orphaned packages (packages that are no longer referenced)
       echo "Checking for orphaned packages in repository..."
       cd repo-branch
+
+      # Check if we have any packages in the repository
+      if ! ls *.pkg.tar.zst 1> /dev/null 2>&1; then
+        echo "No packages found in repository branch"
+      fi
+
       for local_pkg_path in *.pkg.tar.zst; do
         [ -f "$local_pkg_path" ] || continue
         local_pkg_filename=$(basename "$local_pkg_path")
