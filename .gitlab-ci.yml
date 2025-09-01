@@ -20,12 +20,6 @@ image: archlinux:latest
 variables:
   REPO_NAME: "prismlinux"
   REPO_DIR: "public"
-  PACKAGES_BRANCH: "packages" # Branch for storing packages
-  PACKAGES_DIR: "packages" # Directory in packages branch
-
-stages:
-  - build
-  - deploy
 
 workflow:
   rules:
@@ -37,243 +31,17 @@ workflow:
         - .gitlab-ci.yml
         - packages_id.txt
         - remote_packages.txt
-        - pkgbuilds/**/* # Trigger on PKGBUILD file changes
 
 cache:
   key: "repo-cache-${CI_COMMIT_REF_SLUG}"
   paths:
     - "${REPO_DIR}/x86_64/"
-    - "makepkg_cache/"
   policy: pull-push
 
-# Stage for building packages
-build_packages:
-  stage: build
-  rules:
-    # Scheduled builds - build all packages
-    - if: $CI_PIPELINE_SOURCE == 'schedule'
-    # Push to main branch with pkgbuilds changes - incremental build
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE == 'push'
-      changes:
-        - pkgbuilds/**/*
-    # MR with pkgbuilds changes - incremental build for testing
-    - if: $CI_PIPELINE_SOURCE == 'merge_request_event'
-      changes:
-        - pkgbuilds/**/*
-    # Manual run - build all packages
-    - if: $CI_PIPELINE_SOURCE == 'web'
-      when: manual
-      allow_failure: false
-
-  before_script:
-    - pacman -Syu --noconfirm
-    - pacman -S --noconfirm base-devel git sudo
-    # Create user for makepkg (cannot run as root)
-    - useradd -m builduser
-    - echo "builduser ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
-    - mkdir -p makepkg_cache
-    - chown -R builduser:builduser . makepkg_cache
-
-  script: |
-    set -eo pipefail
-
-    echo "Setting up git configuration..."
-    git config user.name "CI Build Bot"
-    git config user.email "ci@crystalnetwork.studio"
-
-    # Clone packages branch or create it
-    echo "Setting up packages branch..."
-    if git ls-remote --heads origin $PACKAGES_BRANCH | grep -q $PACKAGES_BRANCH; then
-        echo "Packages branch exists, fetching..."
-        git fetch origin $PACKAGES_BRANCH
-        git checkout -b $PACKAGES_BRANCH origin/$PACKAGES_BRANCH 2>/dev/null || git checkout $PACKAGES_BRANCH
-    else
-        echo "Creating new packages branch..."
-        git checkout --orphan $PACKAGES_BRANCH
-        git rm -rf . 2>/dev/null || true
-        mkdir -p $PACKAGES_DIR
-        echo "# PrismLinux Packages Repository" > README.md
-        git add README.md
-        git commit -m "Initial commit for packages branch"
-        git push origin $PACKAGES_BRANCH
-    fi
-
-    # Return to main branch for building
-    git checkout $CI_COMMIT_SHA
-
-    mkdir -p built_packages
-
-    # Determine which packages need rebuilding
-    echo "Determining which packages need to be rebuilt..."
-    declare -a packages_to_build
-
-    if [ "$CI_PIPELINE_SOURCE" = "schedule" ]; then
-        echo "Scheduled pipeline - building all packages"
-        if [ -d "pkgbuilds" ]; then
-            for pkgdir in pkgbuilds/*/; do
-                [ -d "$pkgdir" ] && packages_to_build+=($(basename "$pkgdir"))
-            done
-        fi
-    else
-        # Get list of changed files
-        if [ -n "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME" ]; then
-            # For MR compare with target branch
-            COMPARE_REF="origin/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
-        else
-            # For push compare with previous commit
-            if [ "$CI_COMMIT_BEFORE_SHA" != "0000000000000000000000000000000000000000" ]; then
-                COMPARE_REF="$CI_COMMIT_BEFORE_SHA"
-            else
-                # First commit - build everything
-                COMPARE_REF="HEAD~1"
-            fi
-        fi
-
-        echo "Comparing with: $COMPARE_REF"
-
-        # Find changed PKGBUILD files
-        git fetch origin $CI_DEFAULT_BRANCH 2>/dev/null || true
-        CHANGED_FILES=$(git diff --name-only $COMPARE_REF...HEAD 2>/dev/null || git diff --name-only HEAD~1...HEAD)
-
-        echo "Changed files:"
-        echo "$CHANGED_FILES"
-
-        for file in $CHANGED_FILES; do
-            if [[ "$file" == pkgbuilds/*/PKGBUILD ]] || [[ "$file" == pkgbuilds/*/* ]]; then
-                # Extract package name from path
-                pkgname=$(echo "$file" | cut -d'/' -f2)
-                if [ -d "pkgbuilds/$pkgname" ] && [[ ! " ${packages_to_build[@]} " =~ " $pkgname " ]]; then
-                    packages_to_build+=("$pkgname")
-                    echo "Package to rebuild: $pkgname (changed: $file)"
-                fi
-            fi
-        done
-
-        if [ ${#packages_to_build[@]} -eq 0 ]; then
-            echo "No package changes detected, skipping build"
-            exit 0
-        fi
-    fi
-
-    echo "Packages scheduled for building: ${packages_to_build[*]}"
-
-    # Build only modified packages
-    echo "Building modified packages..."
-    if [ -d "pkgbuilds" ]; then
-        for pkgname in "${packages_to_build[@]}"; do
-            pkgdir="pkgbuilds/$pkgname"
-            if [ ! -d "$pkgdir" ]; then
-                echo "WARNING: Package directory $pkgdir not found, skipping"
-                continue
-            fi
-
-            echo "Building package: $pkgname"
-
-            (
-                cd "$pkgdir"
-                if [ ! -f PKGBUILD ]; then
-                    echo "WARNING: No PKGBUILD found in $pkgdir"
-                    continue
-                fi
-
-                # Get package information
-                source PKGBUILD
-                echo "Package info: $pkgname-$pkgver-$pkgrel"
-
-                # Configure makepkg
-                sudo -u builduser bash -c "
-                    export MAKEFLAGS='-j\$(nproc)'
-                    export PKGDEST='$(pwd)/../../built_packages'
-                    export SRCDEST='$(pwd)/../../makepkg_cache/src'
-                    export BUILDDIR='$(pwd)/../../makepkg_cache/build'
-                    mkdir -p \$SRCDEST \$BUILDDIR
-
-                    # Build package
-                    echo 'Building $pkgname-$pkgver-$pkgrel...'
-                    if makepkg -s --noconfirm --needed; then
-                        echo 'Successfully built $pkgname'
-                    else
-                        echo 'Failed to build $pkgname'
-                        exit 1
-                    fi
-                "
-            )
-        done
-    else
-        echo "No pkgbuilds directory found, skipping package building"
-    fi
-
-    # Switch to packages branch and add new packages
-    if [ "$(ls -A built_packages 2>/dev/null)" ]; then
-        echo "Publishing built packages to packages branch..."
-        git checkout $PACKAGES_BRANCH
-
-        # Copy new packages
-        mkdir -p $PACKAGES_DIR
-
-        # Remove old versions of the same packages before adding new ones
-        for new_pkg in built_packages/*.pkg.tar.*; do
-            [ -f "$new_pkg" ] || continue
-            new_pkg_name=$(basename "$new_pkg")
-
-            # Extract base package name without version
-            base_name=$(echo "$new_pkg_name" | sed 's/-[0-9].*$//')
-
-            # Remove all old versions of this package
-            find "$PACKAGES_DIR" -name "${base_name}-*.pkg.tar.*" -delete 2>/dev/null || true
-
-            echo "Adding new package: $new_pkg_name"
-        done
-
-        cp built_packages/*.pkg.tar.* $PACKAGES_DIR/ 2>/dev/null || true
-
-        # Update repository database
-        (
-            cd $PACKAGES_DIR
-            rm -f ${REPO_NAME}.db* ${REPO_NAME}.files*
-
-            if ls ./*.pkg.tar.* 1> /dev/null 2>&1; then
-                echo "Rebuilding repository database with $(ls *.pkg.tar.* | wc -l) packages..."
-                repo-add "${REPO_NAME}.db.tar.gz" *.pkg.tar.*
-                ln -sf "${REPO_NAME}.db.tar.gz" "${REPO_NAME}.db"
-                ln -sf "${REPO_NAME}.files.tar.gz" "${REPO_NAME}.files"
-            fi
-        )
-
-        # Create change log
-        echo "Built packages in this CI run:" > build_log.txt
-        for pkg in built_packages/*.pkg.tar.*; do
-            [ -f "$pkg" ] && echo "- $(basename "$pkg")" >> build_log.txt
-        done
-        echo "Build completed at: $(date)" >> build_log.txt
-
-        # Commit changes
-        git add $PACKAGES_DIR/ build_log.txt
-        if ! git diff --staged --quiet; then
-            commit_msg="Update packages - CI build $CI_PIPELINE_ID
-
-      Built packages: $(ls built_packages/*.pkg.tar.* 2>/dev/null | wc -l)
-      Changed packages: ${packages_to_build[*]}
-      Commit: $CI_COMMIT_SHORT_SHA"
-                  git commit -m "$commit_msg"
-                  git push origin $PACKAGES_BRANCH
-              else
-                  echo "No changes to commit"
-              fi
-          else
-              echo "No packages were built"
-          fi
-
-  artifacts:
-    paths:
-      - built_packages/
-    expire_in: 1 hour
-
-# Main deploy stage
 pages:
   stage: deploy
-  dependencies:
-    - build_packages
+  pages: true
+
   before_script:
     - pacman -Syu --noconfirm
     - pacman -S --noconfirm curl jq base-devel git unzip
@@ -281,145 +49,167 @@ pages:
     - curl -fsSL https://bun.sh/install | bash
     # Add Bun to PATH for the current script execution
     - export PATH="$HOME/.bun/bin:$PATH"
+
   script: |
     set -eo pipefail
     REPO_ARCH_DIR="${REPO_DIR}/x86_64"
 
     echo "Ensuring required directories exist..."
     mkdir -p "${REPO_ARCH_DIR}"
+    # This directory will hold packages.json, which is needed by the Vue app
     mkdir -p "${REPO_DIR}/api"
 
-    echo "Cleaning up existing Vue app files in public/..."
+    echo "Cleaning up existing Vue app files in public/ (index.html, assets/)..."
+    # Remove files and directories generated by previous Vue builds to ensure a clean deployment.
+    # This specifically targets index.html and the assets directory, leaving other content intact.
     rm -f "${REPO_DIR}/index.html" || true
     rm -rf "${REPO_DIR}/assets" || true
-
-    # Setup git
-    git config user.name "CI Build Bot"
-    git config user.email "ci@crystalnetwork.studio"
-
-    # --- Download packages from packages branch ---
-    echo "Fetching packages from packages branch..."
-    if git ls-remote --heads origin $PACKAGES_BRANCH | grep -q $PACKAGES_BRANCH; then
-        # Create worktree for packages branch
-        git worktree add packages_checkout $PACKAGES_BRANCH 2>/dev/null || true
-        if [ -d "packages_checkout/$PACKAGES_DIR" ]; then
-            echo "Copying packages from packages branch..."
-            cp packages_checkout/$PACKAGES_DIR/*.pkg.tar.* "${REPO_ARCH_DIR}/" 2>/dev/null || true
-            cp packages_checkout/$PACKAGES_DIR/${REPO_NAME}.db* "${REPO_ARCH_DIR}/" 2>/dev/null || true
-            cp packages_checkout/$PACKAGES_DIR/${REPO_NAME}.files* "${REPO_ARCH_DIR}/" 2>/dev/null || true
-        fi
-    fi
 
     # --- Handle Remote HTTPS Packages ---
     declare -A remote_packages_map
     echo "Reading remote package URLs from remote_packages.txt..."
     if [ -f remote_packages.txt ]; then
         while IFS= read -r url; do
+            # Skip empty lines and comments starting with #
             [[ -z "$url" || "$url" =~ ^[[:space:]]*# ]] && continue
+            # Basic check if it looks like a URL ending in .pkg.tar.zst
             if [[ "$url" =~ \.pkg\.tar\.zst(\?[^[:space:]]*)?$ ]]; then
-                filename=$(basename "$url" | cut -d'?' -f1)
+                # Use the filename part of the URL as the key
+                filename=$(basename "$url" | cut -d'?' -f1) # Remove potential query parameters for filename key
                 if [[ -n "$filename" ]]; then
                     echo "  -> Adding remote package: $filename from $url"
                     remote_packages_map["$filename"]="$url"
+                else
+                    echo "    WARNING: Could not determine filename from URL: $url"
                 fi
+            else
+                echo "    WARNING: Skipping line (not a .pkg.tar.zst URL): $url"
             fi
         done < remote_packages.txt
+    else
+        echo "INFO: remote_packages.txt not found. No remote HTTPS packages to process."
     fi
 
     echo "Fetching list of all available remote packages from GitLab releases..."
-    if [ -f packages_id.txt ]; then
-        PROJECT_IDS_TO_PROCESS=$(grep -vE '^\s*#|^\s*$' packages_id.txt | awk '{print $1}' | tr '\n' ' ')
-        echo "Processing Project IDs: ${PROJECT_IDS_TO_PROCESS}"
 
-        for project_id in $PROJECT_IDS_TO_PROCESS; do
-            # FIXED: Removed space in URL (was: "https://gitlab.com/api/v4/projects/  ${project_id}/releases")
-            RELEASES_API_URL="https://gitlab.com/api/v4/projects/${project_id}/releases"
-            LATEST_RELEASE=$(curl --silent --show-error --header "PRIVATE-TOKEN: $GITLAB_TOKEN" "$RELEASES_API_URL" | jq -r '.[0]')
-
-            if [ "$LATEST_RELEASE" = "null" ]; then
-                echo "WARNING: No releases found for project ${project_id}. Skipping."
-                continue
-            fi
-
-            while IFS= read -r asset; do
-                if [ -z "$asset" ]; then continue; fi
-                ASSET_URL=$(echo "$asset" | jq -r '.url')
-                ASSET_NAME=$(echo "$asset" | jq -r '.name')
-
-                if [[ "$ASSET_NAME" == *.pkg.tar.zst ]] && [[ "$ASSET_URL" == https://* ]]; then
-                    echo "  -> Adding GitLab package: ${ASSET_NAME} from ${ASSET_URL}"
-                    remote_packages_map["${ASSET_NAME}"]="${ASSET_URL}"
-                fi
-            done <<< "$(echo "$LATEST_RELEASE" | jq -c '.assets.links[]?')"
-        done
+    # Read project IDs from the file, ignore comments and empty lines
+    if [ ! -f packages_id.txt ]; then
+      echo "ERROR: packages_id.txt not found!"
+      exit 1
     fi
 
-    # Download new remote packages
+    PROJECT_IDS_TO_PROCESS=$(grep -vE '^\s*#|^\s*$' packages_id.txt | awk '{print $1}' | tr '\n' ' ')
+    echo "Processing Project IDs: ${PROJECT_IDS_TO_PROCESS}"
+
+    # --- Fetch from GitLab Releases ---
+    # This loop now populates the same remote_packages_map declared above
+    for project_id in $PROJECT_IDS_TO_PROCESS; do
+      RELEASES_API_URL="https://gitlab.com/api/v4/projects/${project_id}/releases" # Fixed spacing
+      LATEST_RELEASE=$(curl --silent --show-error --header "PRIVATE-TOKEN: $GITLAB_TOKEN" "$RELEASES_API_URL" | jq -r '.[0]')
+
+      if [ "$LATEST_RELEASE" = "null" ]; then
+        echo "WARNING: No releases found for project ${project_id}. Skipping."
+        continue
+      fi
+
+      while IFS= read -r asset; do
+        if [ -z "$asset" ]; then continue; fi
+        ASSET_URL=$(echo "$asset" | jq -r '.url')
+        ASSET_NAME=$(echo "$asset" | jq -r '.name')
+
+        # Check if the asset name ends with .pkg.tar.zst
+        if [[ "$ASSET_NAME" == *.pkg.tar.zst ]]; then
+           # Check if the URL looks like a direct download (contains /downloads/ or similar pattern)
+           # GitLab release asset URLs are typically direct download links
+           # You might need to adjust this check based on actual URLs
+           if [[ "$ASSET_URL" == https://* ]]; then
+              echo "  -> Adding GitLab package: ${ASSET_NAME} from ${ASSET_URL}"
+              remote_packages_map["${ASSET_NAME}"]="${ASSET_URL}"
+           else
+              echo "    WARNING: Skipping GitLab asset ${ASSET_NAME}, URL doesn't look like HTTPS direct link: ${ASSET_URL}"
+           fi
+        fi
+      done <<< "$(echo "$LATEST_RELEASE" | jq -c '.assets.links[]?')"
+    done
+
+    echo "Checking for orphaned packages in local repository..."
+    for local_pkg_path in "${REPO_ARCH_DIR}"/*.pkg.tar.zst; do
+      [ -f "$local_pkg_path" ] || continue
+      local_pkg_filename=$(basename "$local_pkg_path")
+      # Check against the combined map (GitLab + HTTPS)
+      if [[ ! -v remote_packages_map["${local_pkg_filename}"] ]]; then
+        echo "  -> Removing orphaned package: ${local_pkg_filename}"
+        rm "$local_pkg_path"
+      fi
+    done
+
     echo "Checking for new packages to download..."
     for pkg_filename in "${!remote_packages_map[@]}"; do
-        if [ ! -f "${REPO_ARCH_DIR}/${pkg_filename}" ]; then
-            echo "  -> Downloading new package: ${pkg_filename}"
-            DOWNLOAD_URL="${remote_packages_map[$pkg_filename]}"
-            if ! curl --location --silent --show-error --fail --output "${REPO_ARCH_DIR}/${pkg_filename}" "${DOWNLOAD_URL}"; then
-                echo "    ERROR: Failed to download ${pkg_filename} from ${DOWNLOAD_URL}"
-                rm -f "${REPO_ARCH_DIR}/${pkg_filename}"
-            fi
+      if [ ! -f "${REPO_ARCH_DIR}/${pkg_filename}" ]; then
+        echo "  -> Downloading new package: ${pkg_filename}"
+        DOWNLOAD_URL="${remote_packages_map[$pkg_filename]}"
+        if ! curl --location --silent --show-error --fail --output "${REPO_ARCH_DIR}/${pkg_filename}" "${DOWNLOAD_URL}"; then
+          echo "    ERROR: Failed to download ${pkg_filename} from ${DOWNLOAD_URL}"
+          rm -f "${REPO_ARCH_DIR}/${pkg_filename}" # Cleanup failed download
         fi
+      fi
     done
+
 
     echo "Updating repository database..."
     (
-        cd "${REPO_ARCH_DIR}"
-        rm -f ${REPO_NAME}.db ${REPO_NAME}.db.tar.gz ${REPO_NAME}.files ${REPO_NAME}.files.tar.gz
+      cd "${REPO_ARCH_DIR}"
 
-        if ls ./*.pkg.tar.* 1> /dev/null 2>&1; then
-            echo "Found packages. Rebuilding repository database..."
-            repo-add "${REPO_NAME}.db.tar.gz" *.pkg.tar.*
-        else
-            echo "No packages found in repository. The database will be empty."
-            touch "${REPO_NAME}.db.tar.gz" "${REPO_NAME}.files.tar.gz"
-        fi
+      rm -f ${REPO_NAME}.db ${REPO_NAME}.db.tar.gz ${REPO_NAME}.files ${REPO_NAME}.files.tar.gz
 
-        ln -sf "${REPO_NAME}.db.tar.gz" "${REPO_NAME}.db"
-        ln -sf "${REPO_NAME}.files.tar.gz" "${REPO_NAME}.files"
+      if ls ./*.pkg.tar.zst 1> /dev/null 2>&1; then
+        echo "Found packages. Rebuilding repository database..."
+        repo-add "${REPO_NAME}.db.tar.gz" *.pkg.tar.zst
+      else
+        echo "No packages found in repository. The database will be empty."
+        touch "${REPO_NAME}.db.tar.gz" "${REPO_NAME}.files.tar.gz"
+      fi
+
+      echo "Ensuring database files are compatible with static hosting..."
+      ln -sf "${REPO_NAME}.db.tar.gz" "${REPO_NAME}.db"
+      ln -sf "${REPO_NAME}.files.tar.gz" "${REPO_NAME}.files"
     )
 
-    echo "Generating package metadata for web interface..."
+    echo "Generating package metadata for web interface (packages.json)..."
     generate_json_objects() {
-        for pkg_file in "${REPO_ARCH_DIR}"/*.pkg.tar.*; do
-            [ -f "$pkg_file" ] || continue
-            pkg_info=$(pacman -Qip "$pkg_file" 2>/dev/null)
+      for pkg_file in "${REPO_ARCH_DIR}"/*.pkg.tar.zst; do
+        [ -f "$pkg_file" ] || continue
+        pkg_info=$(pacman -Qip "$pkg_file" 2>/dev/null)
 
-            jq -cn \
-                --arg name "$(echo "$pkg_info" | grep -m1 "^Name" | sed 's/Name\s*:\s*//')" \
-                --arg version "$(echo "$pkg_info" | grep -m1 "^Version" | sed 's/Version\s*:\s*//')" \
-                --arg desc "$(echo "$pkg_info" | grep -m1 "^Description" | sed 's/Description\s*:\s*//')" \
-                --arg arch "$(echo "$pkg_info" | grep -m1 "^Architecture" | sed 's/Architecture\s*:\s*//')" \
-                --arg filename "$(basename "$pkg_file")" \
-                --arg size "$(ls -lh "$pkg_file" | awk '{print $5}')" \
-                --arg modified "$(date -r "$pkg_file" '+%Y-%m-%d %H:%M:%S')" \
-                --arg depends "$(echo "$pkg_info" | grep -m1 "^Depends On" | sed 's/Depends On\s*:\s*//' || echo 'None')" \
-                --arg groups "$(echo "$pkg_info" | grep -m1 "^Groups" | sed 's/Groups\s*:\s*//' || echo 'None')" \
-                '{name: $name, version: $version, description: $desc, architecture: $arch, filename: $filename, size: $size, modified: $modified, depends: $depends, groups: $groups}'
-        done
+        jq -cn \
+          --arg name "$(echo "$pkg_info" | grep -m1 "^Name" | sed 's/Name\s*:\s*//')" \
+          --arg version "$(echo "$pkg_info" | grep -m1 "^Version" | sed 's/Version\s*:\s*//')" \
+          --arg desc "$(echo "$pkg_info" | grep -m1 "^Description" | sed 's/Description\s*:\s*//')" \
+          --arg arch "$(echo "$pkg_info" | grep -m1 "^Architecture" | sed 's/Architecture\s*:\s*//')" \
+          --arg filename "$(basename "$pkg_file")" \
+          --arg size "$(ls -lh "$pkg_file" | awk '{print $5}')" \
+          --arg modified "$(date -r "$pkg_file" '+%Y-%m-%d %H:%M:%S')" \
+          --arg depends "$(echo "$pkg_info" | grep -m1 "^Depends On" | sed 's/Depends On\s*:\s*//' || echo 'None')" \
+          --arg groups "$(echo "$pkg_info" | grep -m1 "^Groups" | sed 's/Groups\s*:\s*//' || echo 'None')" \
+          '{name: $name, version: $version, description: $desc, architecture: $arch, filename: $filename, size: $size, modified: $modified, depends: $depends, groups: $groups}'
+      done
     }
     generate_json_objects | jq -s . > "${REPO_DIR}/api/packages.json"
 
     echo "Building Vue frontend with Bun..."
     (
-        cd website
-        bun install --frozen-lockfile
-        bun run build
+      cd website
+      bun install --frozen-lockfile
+      bun run build
     )
 
     echo "Copying built Vue app from website/dist to public directory..."
     cp -r website/dist/. "${REPO_DIR}/"
 
+    echo "-----------------------------------------"
     echo "Final check before artifact upload:"
     ls -laR public
-
-    # Clean up worktree
-    git worktree remove packages_checkout 2>/dev/null || true
+    echo "-----------------------------------------"
 
   artifacts:
     paths:
