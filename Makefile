@@ -267,88 +267,6 @@ process-gitlab-line:
 			;; \
 	esac
 
-# Target to sort packages file
-.PHONY: sort
-sort:
-	@FILE_TO_PROCESS="$${FILE:-$(DEFAULT_FILE)}"; \
-	if [ ! -f "$$FILE_TO_PROCESS" ]; then \
-		printf 'ERROR: File not found: %s\n' "$$FILE_TO_PROCESS" >&2; \
-		exit 1; \
-	fi; \
-	if [ ! -r "$$FILE_TO_PROCESS" ]; then \
-		printf 'ERROR: Cannot read file: %s\n' "$$FILE_TO_PROCESS" >&2; \
-		exit 1; \
-	fi; \
-	if [ ! -w "$$FILE_TO_PROCESS" ]; then \
-		printf 'ERROR: Cannot write to file: %s\n' "$$FILE_TO_PROCESS" >&2; \
-		exit 1; \
-	fi; \
-	printf 'INFO: Sorting packages in file: %s\n' "$$FILE_TO_PROCESS" >&2; \
-	TEMP_SORT_FILE=$$(mktemp); \
-	trap "rm -f '$$TEMP_SORT_FILE'" EXIT; \
-	current_section_packages=""; \
-	in_package_block=0; \
-	while IFS= read -r line || [ -n "$$line" ]; do \
-		if echo "$$line" | grep -qE '^[[:space:]]*#'; then \
-			if [ $$in_package_block -eq 1 ] && [ -n "$$current_section_packages" ]; then \
-				printf '%s' "$$current_section_packages" | \
-				while IFS= read -r pkg_line; do \
-					trimmed_pkg=$$(echo "$$pkg_line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$$//'); \
-					if [ -n "$$trimmed_pkg" ]; then \
-						printf '%s\t%s\n' "$$trimmed_pkg" "$$pkg_line"; \
-					fi; \
-				done | \
-				sort -t$$'\t' -k1,1 | \
-				awk -F$$'\t' '!seen[$$1]++ { print $$2 }' >> "$$TEMP_SORT_FILE"; \
-				current_section_packages=""; \
-			fi; \
-			echo "$$line" >> "$$TEMP_SORT_FILE"; \
-			in_package_block=0; \
-		else \
-			trimmed_content=$$(echo "$$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$$//'); \
-			if [ -n "$$trimmed_content" ]; then \
-				if [ -n "$$current_section_packages" ]; then \
-					current_section_packages="$$current_section_packages"$$'\n'"$$line"; \
-				else \
-					current_section_packages="$$line"; \
-				fi; \
-				in_package_block=1; \
-			else \
-				if [ $$in_package_block -eq 1 ] && [ -n "$$current_section_packages" ]; then \
-					printf '%s' "$$current_section_packages" | \
-					while IFS= read -r pkg_line; do \
-						trimmed_pkg=$$(echo "$$pkg_line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$$//'); \
-						if [ -n "$$trimmed_pkg" ]; then \
-							printf '%s\t%s\n' "$$trimmed_pkg" "$$pkg_line"; \
-						fi; \
-					done | \
-					sort -t$$'\t' -k1,1 | \
-					awk -F$$'\t' '!seen[$$1]++ { print $$2 }' >> "$$TEMP_SORT_FILE"; \
-					current_section_packages=""; \
-				fi; \
-				echo "$$line" >> "$$TEMP_SORT_FILE"; \
-				in_package_block=0; \
-			fi; \
-		fi; \
-	done < "$$FILE_TO_PROCESS"; \
-	if [ $$in_package_block -eq 1 ] && [ -n "$$current_section_packages" ]; then \
-		printf '%s' "$$current_section_packages" | \
-		while IFS= read -r pkg_line; do \
-			trimmed_pkg=$$(echo "$$pkg_line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$$//'); \
-			if [ -n "$$trimmed_pkg" ]; then \
-				printf '%s\t%s\n' "$$trimmed_pkg" "$$pkg_line"; \
-			fi; \
-		done | \
-		sort -t$$'\t' -k1,1 | \
-		awk -F$$'\t' '!seen[$$1]++ { print $$2 }' >> "$$TEMP_SORT_FILE"; \
-	fi; \
-	if mv "$$TEMP_SORT_FILE" "$$FILE_TO_PROCESS"; then \
-		printf 'SUCCESS: File %s sorted by sections and duplicates removed successfully\n' "$$FILE_TO_PROCESS" >&2; \
-	else \
-		printf 'ERROR: Failed to write sorted content to %s\n' "$$FILE_TO_PROCESS" >&2; \
-		exit 1; \
-	fi
-
 # Help target
 .PHONY: help
 help:
@@ -356,7 +274,6 @@ help:
 	@echo "  update         - Update default packages file ($(DEFAULT_FILE))"
 	@echo "  update-remote  - Update remote packages file ($(REMOTE_PACKAGES))"
 	@echo "  update-all     - Update both packages files"
-	@echo "  sort           - Sort packages by sections and remove duplicates"
 	@echo "  check-deps     - Check if required dependencies are installed"
 	@echo "  help           - Show this help message"
 	@echo ""
@@ -370,4 +287,3 @@ help:
 	@echo "  make update-all                # Update both files"
 	@echo "  make update FILE=my_file.txt   # Update custom file"
 	@echo "  GITLAB_TOKEN=token make update-remote"
-	@echo "  make sort FILE=$(REMOTE_PACKAGES)  # Sort remote packages"
