@@ -1,7 +1,6 @@
 72073467 # Gaming meta
 72958263 # Rate mirrors
 74020675 # Graphics
-74212151 # swaylock-effects-git
 
 # Branding
 70964684 # PrismLinux Fish Theme
