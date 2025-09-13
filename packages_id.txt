@@ -13,7 +13,6 @@
 71590188 # Grub Theme
 71715668 # PrismLinux Hooks
 
-
 # Settings
 72940371 # Gnome Settings
 72941090 # Plasma Settings
