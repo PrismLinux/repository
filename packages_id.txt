@@ -16,4 +16,9 @@
 # Settings
 72940371 # Gnome Settings
 72941090 # Plasma Settings
+74425619 # Cosmic Settings
+74425817 # Cinnamon Settings
 72942471 # PrismLinux Settings
+
+# CrystalNetwork Studio
+74375145 # PKGBUILD Manager
