@@ -138,6 +138,8 @@ func NewConfig(cmd *cobra.Command) (*Config, error) {
 	cfg.Debug, _ = cmd.Flags().GetBool("debug")
 	cfg.Verbose, _ = cmd.Flags().GetBool("verbose")
 
+	// GitLab token is optional - the tool can work without it
+	// It will just process remote_packages.txt instead of GitLab releases
 	if cfg.GitLabToken == "" && !cfg.CleanMode {
 		cfg.debugLog("No GitLab token provided - will only process remote packages from remote_packages.txt")
 	}
@@ -457,8 +459,6 @@ func (gm *GitManager) ensureGitRepo() error {
 func (gm *GitManager) getDefaultBranch() (string, error) {
 	// Try to get the default branch from remote
 	cmd := exec.Command("git", "symbolic-ref", "refs/remotes/origin/HEAD")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
 	if output, err := cmd.Output(); err == nil {
 		parts := strings.Split(strings.TrimSpace(string(output)), "/")
 		if len(parts) > 0 {
@@ -500,10 +500,8 @@ func (gm *GitManager) initializeGitRepo() error {
 	}
 
 	// Set git configuration
-	cmd = exec.Command("git", "config", "user.name", "Package Manager")
-	cmd.Run()
-	cmd = exec.Command("git", "config", "user.email", "package-manager@prismlinux.org")
-	cmd.Run()
+	exec.Command("git", "config", "user.name", "Package Manager").Run()
+	exec.Command("git", "config", "user.email", "package-manager@prismlinux.org").Run()
 
 	// Create initial README if it doesn't exist
 	if _, err := os.Stat("README.md"); os.IsNotExist(err) {
@@ -547,10 +545,9 @@ func (gm *GitManager) commitAndPushBranch(branchName, message string) error {
 		return fmt.Errorf("failed to set git user email: %w", err)
 	}
 
+	// FIXED: Safely remove all tracked files except .git directory
 	// Get list of all tracked files
 	cmd = exec.Command("git", "ls-files")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
 	output, err := cmd.Output()
 	if err != nil {
 		return fmt.Errorf("failed to list git files: %w", err)
@@ -562,7 +559,10 @@ func (gm *GitManager) commitAndPushBranch(branchName, message string) error {
 		files := strings.Split(trackedFiles, "\n")
 		// Remove files in batches to avoid command line length limits
 		for i := 0; i < len(files); i += 100 {
-			end := min(i+100, len(files))
+			end := i + 100
+			if end > len(files) {
+				end = len(files)
+			}
 			batch := files[i:end]
 
 			args := append([]string{"rm", "-f", "--ignore-unmatch"}, batch...)
@@ -839,9 +839,7 @@ func (pm *PackageManager) updateRepoDatabase() error {
 	if len(matches) > 0 {
 		args := append([]string{pm.config.RepoName + ".db.tar.gz"}, matches...)
 		cmd := exec.Command("repo-add", args...)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if pm.config.Debug {
+		if pm.config.Debug || pm.config.Verbose {
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
 		}
@@ -902,11 +900,13 @@ func (pm *PackageManager) generatePackagesJSON() error {
 
 func (pm *PackageManager) extractPackageInfo(pkgPath string) (*PackageInfo, error) {
 	cmd := exec.Command("pacman", "-Qip", pkgPath)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
 	output, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("pacman -Qip failed: %w", err)
+	}
+
+	if pm.config.Debug || pm.config.Verbose {
+		fmt.Print(string(output))
 	}
 
 	info := &PackageInfo{
