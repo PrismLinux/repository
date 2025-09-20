@@ -21,4 +21,5 @@
 72942471 # PrismLinux Settings
 
 # CrystalNetwork Studio
-74375145 # PKGBUILD Manager
+74599632 # PKGBUILD Manager
+74375145 # PKGBUILD BUILDER
