@@ -45,54 +45,101 @@ type Config struct {
 	Verbose       bool
 }
 
+// Logger provides structured logging methods
+func (cfg *Config) debugLog(format string, args ...interface{}) {
+	if cfg.Debug {
+		fmt.Printf("[DEBUG] "+format+"\n", args...)
+	}
+}
+
+func (cfg *Config) verboseLog(format string, args ...interface{}) {
+	if cfg.Verbose || cfg.Debug {
+		fmt.Printf("[VERBOSE] "+format+"\n", args...)
+	}
+}
+
+func (cfg *Config) infoLog(format string, args ...interface{}) {
+	fmt.Printf("[INFO] "+format+"\n", args...)
+}
+
+// PackageManager handles all package management operations
+type PackageManager struct {
+	config       *Config
+	gitlabClient *gitlab.Client
+}
+
+func NewPackageManager(cfg *Config) (*PackageManager, error) {
+	pm := &PackageManager{config: cfg}
+
+	if cfg.GitLabToken != "" && !cfg.CleanMode {
+		git, err := gitlab.NewClient(cfg.GitLabToken)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create GitLab client: %w", err)
+		}
+		pm.gitlabClient = git
+	}
+
+	return pm, nil
+}
+
+// GitManager handles all git operations
+type GitManager struct {
+	config *Config
+}
+
+func NewGitManager(cfg *Config) *GitManager {
+	return &GitManager{config: cfg}
+}
+
+// FileManager handles file operations
+type FileManager struct {
+	config *Config
+}
+
+func NewFileManager(cfg *Config) *FileManager {
+	return &FileManager{config: cfg}
+}
+
+// Helper function to get string flags with defaults
+func getStringFlag(cmd *cobra.Command, name, defaultValue string) string {
+	if value, _ := cmd.Flags().GetString(name); value != "" {
+		return value
+	}
+	return defaultValue
+}
+
 func NewConfig(cmd *cobra.Command) (*Config, error) {
-	repoName, _ := cmd.Flags().GetString("repo-name")
-	if repoName == "" {
-		repoName = "prismlinux"
+	cfg := &Config{}
+
+	// Set defaults and get flag values
+	cfg.RepoName = getStringFlag(cmd, "repo-name", "prismlinux")
+	cfg.RepoArchDir = getStringFlag(cmd, "repo-arch-dir", "public/x86_64")
+	cfg.APIDir = getStringFlag(cmd, "api-dir", "public/api")
+
+	// Handle token with fallback to environment
+	cfg.GitLabToken = getStringFlag(cmd, "gitlab-token", "")
+	if cfg.GitLabToken == "" {
+		cfg.GitLabToken = os.Getenv("GITLAB_TOKEN")
 	}
 
-	repoArchDir, _ := cmd.Flags().GetString("repo-arch-dir")
-	if repoArchDir == "" {
-		repoArchDir = "public/x86_64"
+	// Handle project ID with fallback to environment
+	cfg.CurrentProjID = getStringFlag(cmd, "project-id", "")
+	if cfg.CurrentProjID == "" {
+		cfg.CurrentProjID = os.Getenv("CI_PROJECT_ID")
 	}
 
-	apiDir, _ := cmd.Flags().GetString("api-dir")
-	if apiDir == "" {
-		apiDir = "public/api"
-	}
+	cfg.Commit, _ = cmd.Flags().GetBool("commit")
+	cfg.TestMode, _ = cmd.Flags().GetBool("test")
+	cfg.CleanMode, _ = cmd.Flags().GetBool("clean")
+	cfg.Debug, _ = cmd.Flags().GetBool("debug")
+	cfg.Verbose, _ = cmd.Flags().GetBool("verbose")
 
-	gitLabToken, _ := cmd.Flags().GetString("gitlab-token")
-	if gitLabToken == "" {
-		gitLabToken = os.Getenv("GITLAB_TOKEN")
-	}
-
-	currentProjID, _ := cmd.Flags().GetString("project-id")
-	if currentProjID == "" {
-		currentProjID = os.Getenv("CI_PROJECT_ID")
-	}
-
-	commit, _ := cmd.Flags().GetBool("commit")
-	testMode, _ := cmd.Flags().GetBool("test")
-	cleanMode, _ := cmd.Flags().GetBool("clean")
-	debug, _ := cmd.Flags().GetBool("debug")
-	verbose, _ := cmd.Flags().GetBool("verbose")
-
-	if gitLabToken == "" && !cleanMode {
+	// Validate required configuration
+	if cfg.GitLabToken == "" && !cfg.CleanMode {
 		return nil, fmt.Errorf("GITLAB_TOKEN is required (set via flag or environment variable)")
 	}
 
-	return &Config{
-		RepoName:      repoName,
-		RepoArchDir:   repoArchDir,
-		APIDir:        apiDir,
-		GitLabToken:   gitLabToken,
-		CurrentProjID: currentProjID,
-		Commit:        commit,
-		TestMode:      testMode,
-		CleanMode:     cleanMode,
-		Debug:         debug,
-		Verbose:       verbose,
-	}, nil
+	return cfg, nil
 }
 
 var RootCmd = &cobra.Command{
@@ -109,114 +156,63 @@ var RootCmd = &cobra.Command{
 }
 
 func runPackageManagement(cfg *Config) error {
-	if cfg.Debug {
-		fmt.Printf("[DEBUG] Starting with config: %+v\n", cfg)
+	cfg.debugLog("Starting with config: %+v", cfg)
+
+	// Initialize managers
+	pm, err := NewPackageManager(cfg)
+	if err != nil {
+		return err
 	}
+
+	gitMgr := NewGitManager(cfg)
+	fileMgr := NewFileManager(cfg)
 
 	if cfg.CleanMode {
-		if cfg.Debug {
-			fmt.Println("[DEBUG] Clean mode enabled")
-		}
-		return cleanAllFiles(cfg)
+		cfg.debugLog("Clean mode enabled")
+		return pm.cleanAllFiles(gitMgr, fileMgr)
 	}
 
-	if err := os.MkdirAll(cfg.RepoArchDir, 0755); err != nil {
-		return fmt.Errorf("failed to create repo arch directory: %w", err)
-	}
-	if err := os.MkdirAll(cfg.APIDir, 0755); err != nil {
-		return fmt.Errorf("failed to create api directory: %w", err)
+	// Create necessary directories
+	if err := fileMgr.createDirectories(); err != nil {
+		return err
 	}
 
-	git, err := gitlab.NewClient(cfg.GitLabToken)
-	if err != nil {
-		return fmt.Errorf("failed to create GitLab client: %w", err)
+	// Setup git operations
+	if err := gitMgr.setupGitOperations(); err != nil {
+		return err
 	}
 
-	if cfg.TestMode {
-		fmt.Println("Running in test mode - creating test branch...")
-		if err := setupTestBranch(); err != nil {
-			return fmt.Errorf("failed to setup test branch: %w", err)
-		}
-	} else if cfg.Commit {
-		fmt.Println("Ensuring git repository is initialized...")
-		if err := initializeGitRepo(); err != nil {
-			return fmt.Errorf("failed to initialize git repository: %w", err)
-		}
-
-		fmt.Println("Checking out 'packages' branch...")
-		if err := checkoutOrCreateBranch("packages"); err != nil {
-			return fmt.Errorf("failed to checkout/create 'packages' branch: %w", err)
-		}
-	} else {
-		fmt.Println("Skipping git operations (not committing)")
+	// Main package management workflow
+	if err := pm.syncPackages(); err != nil {
+		return err
 	}
 
-	remotePackages, err := readRemotePackages(cfg)
-	if err != nil {
-		return fmt.Errorf("failed to read remote package lists: %w", err)
-	}
-
-	gitlabPackages, err := fetchGitLabPackages(git, cfg.CurrentProjID, cfg)
-	if err != nil {
-		return fmt.Errorf("failed to fetch packages from GitLab releases: %w", err)
-	}
-
-	allRemotePackages := make(map[string]RemotePackage)
-	for _, pkg := range remotePackages {
-		allRemotePackages[pkg.Filename] = pkg
-	}
-	for _, pkg := range gitlabPackages {
-		allRemotePackages[pkg.Filename] = pkg
-	}
-
-	if err := removeOrphanedPackages(cfg.RepoArchDir, allRemotePackages, cfg); err != nil {
-		return fmt.Errorf("failed to remove orphaned packages: %w", err)
-	}
-
-	if err := downloadNewPackages(cfg.RepoArchDir, allRemotePackages, cfg); err != nil {
-		return fmt.Errorf("failed to download new packages: %w", err)
-	}
-
-	if err := updateRepoDatabase(cfg.RepoArchDir, cfg.RepoName, cfg); err != nil {
-		return fmt.Errorf("failed to update repository database: %w", err)
-	}
-
-	if err := generatePackagesJSON(cfg.RepoArchDir, cfg.APIDir, cfg); err != nil {
-		return fmt.Errorf("failed to generate packages.json: %w", err)
-	}
-
-	if cfg.TestMode {
-		fmt.Println("Test mode complete - files saved to test branch.")
-		fmt.Println("To clean up: git branch -D test-packages")
-	} else if cfg.Commit {
-		fmt.Println("Committing and pushing changes to 'packages' branch...")
-		if err := commitAndPushBranch("packages", "Update packages and repository database"); err != nil {
-			return fmt.Errorf("failed to commit and push 'packages' branch: %w", err)
-		}
-	} else {
-		fmt.Println("Skipping commit/push. Use --commit flag to enable or --test for local testing.")
+	// Finalize git operations
+	if err := gitMgr.finalizeGitOperations(); err != nil {
+		return err
 	}
 
 	fmt.Println("Package management completed successfully.")
 	return nil
 }
 
-func debugLog(cfg *Config, format string, args ...interface{}) {
-	if cfg.Debug {
-		fmt.Printf("[DEBUG] "+format+"\n", args...)
+// FileManager methods
+func (fm *FileManager) createDirectories() error {
+	dirs := []string{fm.config.RepoArchDir, fm.config.APIDir}
+
+	for _, dir := range dirs {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return fmt.Errorf("failed to create directory %s: %w", dir, err)
+		}
 	}
+
+	return nil
 }
 
-func verboseLog(cfg *Config, format string, args ...interface{}) {
-	if cfg.Verbose || cfg.Debug {
-		fmt.Printf("[VERBOSE] "+format+"\n", args...)
-	}
-}
-
-func removeAllPackages(repoDir string) error {
+func (fm *FileManager) removeAllPackages() error {
 	fmt.Println("Removing all package files...")
 
-	files, err := os.ReadDir(repoDir)
+	files, err := os.ReadDir(fm.config.RepoArchDir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			fmt.Println("Repository directory doesn't exist, nothing to clean.")
@@ -228,7 +224,7 @@ func removeAllPackages(repoDir string) error {
 	packageCount := 0
 	for _, file := range files {
 		if !file.IsDir() && strings.HasSuffix(file.Name(), ".pkg.tar.zst") {
-			filePath := filepath.Join(repoDir, file.Name())
+			filePath := filepath.Join(fm.config.RepoArchDir, file.Name())
 			fmt.Printf("  -> Removing package: %s\n", file.Name())
 			if err := os.Remove(filePath); err != nil {
 				return fmt.Errorf("failed to remove package %s: %w", file.Name(), err)
@@ -241,18 +237,18 @@ func removeAllPackages(repoDir string) error {
 	return nil
 }
 
-func removeRepositoryDatabase(repoDir, repoName string) error {
+func (fm *FileManager) removeRepositoryDatabase() error {
 	fmt.Println("Removing repository database files...")
 
 	dbFiles := []string{
-		repoName + ".db",
-		repoName + ".db.tar.gz",
-		repoName + ".files",
-		repoName + ".files.tar.gz",
+		fm.config.RepoName + ".db",
+		fm.config.RepoName + ".db.tar.gz",
+		fm.config.RepoName + ".files",
+		fm.config.RepoName + ".files.tar.gz",
 	}
 
 	for _, dbFile := range dbFiles {
-		filePath := filepath.Join(repoDir, dbFile)
+		filePath := filepath.Join(fm.config.RepoArchDir, dbFile)
 		if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
 			fmt.Printf("  -> Warning: failed to remove %s: %v\n", dbFile, err)
 		} else if err == nil {
@@ -263,10 +259,10 @@ func removeRepositoryDatabase(repoDir, repoName string) error {
 	return nil
 }
 
-func createEmptyPackagesJSON(apiDir string) error {
+func (fm *FileManager) createEmptyPackagesJSON() error {
 	fmt.Println("Creating empty packages.json...")
 
-	if err := os.MkdirAll(apiDir, 0755); err != nil {
+	if err := os.MkdirAll(fm.config.APIDir, 0755); err != nil {
 		return fmt.Errorf("failed to create API directory: %w", err)
 	}
 
@@ -276,7 +272,7 @@ func createEmptyPackagesJSON(apiDir string) error {
 		return fmt.Errorf("failed to marshal empty JSON: %w", err)
 	}
 
-	err = os.WriteFile(filepath.Join(apiDir, "packages.json"), jsonData, 0644)
+	err = os.WriteFile(filepath.Join(fm.config.APIDir, "packages.json"), jsonData, 0644)
 	if err != nil {
 		return fmt.Errorf("failed to write empty packages.json: %w", err)
 	}
@@ -285,76 +281,47 @@ func createEmptyPackagesJSON(apiDir string) error {
 	return nil
 }
 
-func cleanAllFiles(cfg *Config) error {
-	fmt.Println("Starting cleanup mode - removing all packages and repository files...")
-
-	if cfg.TestMode {
-		fmt.Println("Setting up test branch for cleanup...")
-		if err := setupTestBranch(); err != nil {
-			return fmt.Errorf("failed to setup test branch: %w", err)
-		}
-	} else if cfg.Commit {
+// GitManager methods
+func (gm *GitManager) setupGitOperations() error {
+	if gm.config.TestMode {
+		fmt.Println("Running in test mode - creating test branch...")
+		return gm.setupTestBranch()
+	} else if gm.config.Commit {
 		fmt.Println("Ensuring git repository is initialized...")
-		if err := initializeGitRepo(); err != nil {
+		if err := gm.initializeGitRepo(); err != nil {
 			return fmt.Errorf("failed to initialize git repository: %w", err)
 		}
 
 		fmt.Println("Checking out 'packages' branch...")
-		if err := checkoutOrCreateBranch("packages"); err != nil {
-			return fmt.Errorf("failed to checkout/create 'packages' branch: %w", err)
-		}
-	}
-
-	if err := removeAllPackages(cfg.RepoArchDir); err != nil {
-		return fmt.Errorf("failed to remove packages: %w", err)
-	}
-
-	if err := removeRepositoryDatabase(cfg.RepoArchDir, cfg.RepoName); err != nil {
-		return fmt.Errorf("failed to remove repository database: %w", err)
-	}
-
-	if err := createEmptyPackagesJSON(cfg.APIDir); err != nil {
-		return fmt.Errorf("failed to create empty packages.json: %w", err)
-	}
-
-	if cfg.TestMode {
-		fmt.Println("Cleanup test mode complete - files removed from test branch.")
-		fmt.Println("Use 'git log --oneline test-packages' to see changes.")
-		fmt.Println("To clean up: git branch -D test-packages")
-	} else if cfg.Commit {
-		fmt.Println("Committing and pushing cleanup changes...")
-		if err := commitAndPushBranch("packages", "Clean up all packages and repository files"); err != nil {
-			return fmt.Errorf("failed to commit and push cleanup: %w", err)
-		}
+		return gm.checkoutOrCreateBranch("packages")
 	} else {
-		fmt.Println("Cleanup complete. Use --commit to save changes or --test for test mode.")
+		fmt.Println("Skipping git operations (not committing)")
+		return nil
 	}
-
-	fmt.Println("All packages and repository files have been removed successfully.")
-	return nil
 }
 
-func init() {
-	RootCmd.Flags().String("repo-name", "prismlinux", "Repository name")
-	RootCmd.Flags().String("repo-arch-dir", "public/x86_64", "Architecture-specific repo directory")
-	RootCmd.Flags().String("api-dir", "public/api", "API directory for metadata")
-	RootCmd.Flags().String("gitlab-token", "", "GitLab token (overrides GITLAB_TOKEN env)")
-	RootCmd.Flags().String("project-id", "", "GitLab project ID (overrides CI_PROJECT_ID env)")
-	RootCmd.Flags().Bool("commit", false, "Commit and push to 'packages' branch")
-	RootCmd.Flags().Bool("test", false, "Test mode - use test-packages branch, no push")
-	RootCmd.Flags().Bool("clean", false, "Clean mode - remove all packages and repo files")
-	RootCmd.Flags().Bool("debug", false, "Enable debug output")
-	RootCmd.Flags().Bool("verbose", false, "Enable verbose output")
+func (gm *GitManager) finalizeGitOperations() error {
+	if gm.config.TestMode {
+		fmt.Println("Test mode complete - files saved to test branch.")
+		fmt.Println("To clean up: git branch -D test-packages")
+		return nil
+	} else if gm.config.Commit {
+		fmt.Println("Committing and pushing changes to 'packages' branch...")
+		return gm.commitAndPushBranch("packages", "Update packages and repository database")
+	} else {
+		fmt.Println("Skipping commit/push. Use --commit flag to enable or --test for local testing.")
+		return nil
+	}
 }
 
-func setupTestBranch() error {
-	if err := ensureGitRepo(); err != nil {
+func (gm *GitManager) setupTestBranch() error {
+	if err := gm.ensureGitRepo(); err != nil {
 		return fmt.Errorf("not in a git repository: %w", err)
 	}
 
 	branchName := "test-packages"
 
-	defaultBranch, err := getDefaultBranch()
+	defaultBranch, err := gm.getDefaultBranch()
 	if err != nil {
 		return fmt.Errorf("failed to determine default branch: %w", err)
 	}
@@ -364,6 +331,7 @@ func setupTestBranch() error {
 		return fmt.Errorf("failed to checkout default branch '%s': %w", defaultBranch, err)
 	}
 
+	// Delete existing test branch if it exists
 	exec.Command("git", "branch", "-D", branchName).Run()
 
 	cmd = exec.Command("git", "checkout", "-b", branchName)
@@ -375,18 +343,20 @@ func setupTestBranch() error {
 	return nil
 }
 
-func checkoutOrCreateBranch(branchName string) error {
-	if err := ensureGitRepo(); err != nil {
+func (gm *GitManager) checkoutOrCreateBranch(branchName string) error {
+	if err := gm.ensureGitRepo(); err != nil {
 		return fmt.Errorf("not in a git repository: %w", err)
 	}
 
+	// Try to checkout existing branch
 	cmd := exec.Command("git", "checkout", branchName)
 	if err := cmd.Run(); err == nil {
 		fmt.Printf("Checked out existing branch '%s'\n", branchName)
 		return nil
 	}
 
-	defaultBranch, err := getDefaultBranch()
+	// Create new branch from default branch
+	defaultBranch, err := gm.getDefaultBranch()
 	if err != nil {
 		return fmt.Errorf("failed to determine default branch: %w", err)
 	}
@@ -405,13 +375,14 @@ func checkoutOrCreateBranch(branchName string) error {
 	return nil
 }
 
-func ensureGitRepo() error {
+func (gm *GitManager) ensureGitRepo() error {
 	cmd := exec.Command("git", "rev-parse", "--git-dir")
 	cmd.Stderr = nil
 	return cmd.Run()
 }
 
-func getDefaultBranch() (string, error) {
+func (gm *GitManager) getDefaultBranch() (string, error) {
+	// Try to get the default branch from remote
 	cmd := exec.Command("git", "symbolic-ref", "refs/remotes/origin/HEAD")
 	if output, err := cmd.Output(); err == nil {
 		parts := strings.Split(strings.TrimSpace(string(output)), "/")
@@ -420,6 +391,7 @@ func getDefaultBranch() (string, error) {
 		}
 	}
 
+	// Try common branch names
 	branches := []string{"main", "master", "develop"}
 	for _, branch := range branches {
 		cmd := exec.Command("git", "show-ref", "--verify", "--quiet", "refs/heads/"+branch)
@@ -428,6 +400,7 @@ func getDefaultBranch() (string, error) {
 		}
 	}
 
+	// Fall back to current branch
 	cmd = exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
 	if output, err := cmd.Output(); err == nil {
 		currentBranch := strings.TrimSpace(string(output))
@@ -439,8 +412,8 @@ func getDefaultBranch() (string, error) {
 	return "", fmt.Errorf("could not determine default branch")
 }
 
-func initializeGitRepo() error {
-	if err := ensureGitRepo(); err == nil {
+func (gm *GitManager) initializeGitRepo() error {
+	if err := gm.ensureGitRepo(); err == nil {
 		return nil
 	}
 
@@ -449,9 +422,11 @@ func initializeGitRepo() error {
 		return fmt.Errorf("failed to initialize git repository: %w", err)
 	}
 
+	// Set git configuration
 	exec.Command("git", "config", "user.name", "Package Manager").Run()
 	exec.Command("git", "config", "user.email", "package-manager@prismlinux.org").Run()
 
+	// Create initial README if it doesn't exist
 	if _, err := os.Stat("README.md"); os.IsNotExist(err) {
 		readmeContent := "# Package Repository\n\nManaged by package manager tool.\n"
 		if err := os.WriteFile("README.md", []byte(readmeContent), 0644); err != nil {
@@ -473,12 +448,159 @@ func initializeGitRepo() error {
 	return nil
 }
 
-func readRemotePackages(cfg *Config) ([]RemotePackage, error) {
+func (gm *GitManager) commitAndPushBranch(branchName, message string) error {
+	// Set git user configuration for CI
+	cmd := exec.Command("git", "config", "user.name", "GitLab CI/Package Manager")
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to set git user name: %w", err)
+	}
+
+	cmd = exec.Command("git", "config", "user.email", "ci@prismlinux.org")
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to set git user email: %w", err)
+	}
+
+	// FIXED: Safely remove all tracked files except .git directory
+	// Get list of all tracked files
+	cmd = exec.Command("git", "ls-files")
+	output, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("failed to list git files: %w", err)
+	}
+
+	// Only remove files if there are any tracked files
+	trackedFiles := strings.TrimSpace(string(output))
+	if trackedFiles != "" {
+		files := strings.Split(trackedFiles, "\n")
+		// Remove files in batches to avoid command line length limits
+		for i := 0; i < len(files); i += 100 {
+			end := i + 100
+			if end > len(files) {
+				end = len(files)
+			}
+			batch := files[i:end]
+
+			args := append([]string{"rm", "-f", "--ignore-unmatch"}, batch...)
+			cmd = exec.Command("git", args...)
+			if err := cmd.Run(); err != nil {
+				return fmt.Errorf("failed to remove tracked files batch: %w", err)
+			}
+		}
+	}
+
+	// Add back only the public/ directory
+	cmd = exec.Command("git", "add", "public/")
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to add public/: %w", err)
+	}
+
+	// Commit changes
+	cmd = exec.Command("git", "commit", "-m", message, "--allow-empty")
+	if err := cmd.Run(); err != nil {
+		// Check if it's just a "nothing to commit" message
+		if !strings.Contains(err.Error(), "nothing to commit") {
+			return fmt.Errorf("failed to commit: %w", err)
+		}
+	}
+
+	// Push with force-with-lease (safe for artifact branches)
+	cmd = exec.Command("git", "push", "origin", branchName, "--force-with-lease")
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to push branch %s: %w", branchName, err)
+	}
+
+	fmt.Printf("✅ Branch '%s' updated with only 'public/' directory\n", branchName)
+	return nil
+}
+
+// PackageManager methods
+func (pm *PackageManager) syncPackages() error {
+	// Read remote packages
+	remotePackages, err := pm.readRemotePackages()
+	if err != nil {
+		return fmt.Errorf("failed to read remote package lists: %w", err)
+	}
+
+	// Fetch GitLab packages
+	gitlabPackages, err := pm.fetchGitLabPackages()
+	if err != nil {
+		return fmt.Errorf("failed to fetch packages from GitLab releases: %w", err)
+	}
+
+	// Combine all remote packages
+	allRemotePackages := make(map[string]RemotePackage)
+	for _, pkg := range remotePackages {
+		allRemotePackages[pkg.Filename] = pkg
+	}
+	for _, pkg := range gitlabPackages {
+		allRemotePackages[pkg.Filename] = pkg
+	}
+
+	// Sync packages
+	if err := pm.removeOrphanedPackages(allRemotePackages); err != nil {
+		return fmt.Errorf("failed to remove orphaned packages: %w", err)
+	}
+
+	if err := pm.downloadNewPackages(allRemotePackages); err != nil {
+		return fmt.Errorf("failed to download new packages: %w", err)
+	}
+
+	if err := pm.updateRepoDatabase(); err != nil {
+		return fmt.Errorf("failed to update repository database: %w", err)
+	}
+
+	if err := pm.generatePackagesJSON(); err != nil {
+		return fmt.Errorf("failed to generate packages.json: %w", err)
+	}
+
+	return nil
+}
+
+func (pm *PackageManager) cleanAllFiles(gitMgr *GitManager, fileMgr *FileManager) error {
+	fmt.Println("Starting cleanup mode - removing all packages and repository files...")
+
+	// Setup git operations for cleanup
+	if err := gitMgr.setupGitOperations(); err != nil {
+		return err
+	}
+
+	// Perform cleanup operations
+	if err := fileMgr.removeAllPackages(); err != nil {
+		return fmt.Errorf("failed to remove packages: %w", err)
+	}
+
+	if err := fileMgr.removeRepositoryDatabase(); err != nil {
+		return fmt.Errorf("failed to remove repository database: %w", err)
+	}
+
+	if err := fileMgr.createEmptyPackagesJSON(); err != nil {
+		return fmt.Errorf("failed to create empty packages.json: %w", err)
+	}
+
+	// Finalize git operations
+	if pm.config.TestMode {
+		fmt.Println("Cleanup test mode complete - files removed from test branch.")
+		fmt.Println("Use 'git log --oneline test-packages' to see changes.")
+		fmt.Println("To clean up: git branch -D test-packages")
+	} else if pm.config.Commit {
+		fmt.Println("Committing and pushing cleanup changes...")
+		if err := gitMgr.commitAndPushBranch("packages", "Clean up all packages and repository files"); err != nil {
+			return fmt.Errorf("failed to commit and push cleanup: %w", err)
+		}
+	} else {
+		fmt.Println("Cleanup complete. Use --commit to save changes or --test for test mode.")
+	}
+
+	fmt.Println("All packages and repository files have been removed successfully.")
+	return nil
+}
+
+func (pm *PackageManager) readRemotePackages() ([]RemotePackage, error) {
 	var packages []RemotePackage
 
 	file, err := os.Open("remote_packages.txt")
 	if os.IsNotExist(err) {
-		fmt.Println("[INFO] remote_packages.txt not found. No remote HTTPS packages to process.")
+		pm.config.infoLog("remote_packages.txt not found. No remote HTTPS packages to process.")
 		return packages, nil
 	} else if err != nil {
 		return nil, fmt.Errorf("failed to open remote_packages.txt: %w", err)
@@ -502,10 +624,14 @@ func readRemotePackages(cfg *Config) ([]RemotePackage, error) {
 	return packages, scanner.Err()
 }
 
-func fetchGitLabPackages(git *gitlab.Client, currentProjectID string, cfg *Config) ([]RemotePackage, error) {
+func (pm *PackageManager) fetchGitLabPackages() ([]RemotePackage, error) {
 	var packages []RemotePackage
 
-	projectIDs, err := readProjectIDs("packages_id.txt", cfg)
+	if pm.gitlabClient == nil {
+		return packages, nil
+	}
+
+	projectIDs, err := pm.readProjectIDs("packages_id.txt")
 	if err != nil {
 		return nil, err
 	}
@@ -515,7 +641,7 @@ func fetchGitLabPackages(git *gitlab.Client, currentProjectID string, cfg *Confi
 			ListOptions: gitlab.ListOptions{PerPage: 1},
 		}
 
-		releases, _, err := git.Releases.ListReleases(projectID, listOptions)
+		releases, _, err := pm.gitlabClient.Releases.ListReleases(projectID, listOptions)
 		if err != nil {
 			fmt.Printf("[WARNING] Failed to fetch releases for project %s: %v. Skipping.\n", projectID, err)
 			continue
@@ -535,7 +661,7 @@ func fetchGitLabPackages(git *gitlab.Client, currentProjectID string, cfg *Confi
 	return packages, nil
 }
 
-func readProjectIDs(filename string, cfg *Config) ([]string, error) {
+func (pm *PackageManager) readProjectIDs(filename string) ([]string, error) {
 	file, err := os.Open(filename)
 	if err != nil {
 		return nil, fmt.Errorf("packages_id.txt not found: %w", err)
@@ -557,42 +683,59 @@ func readProjectIDs(filename string, cfg *Config) ([]string, error) {
 	return ids, scanner.Err()
 }
 
-func removeOrphanedPackages(localDir string, remotePackages map[string]RemotePackage, cfg *Config) error {
-	files, err := os.ReadDir(localDir)
+func (pm *PackageManager) removeOrphanedPackages(remotePackages map[string]RemotePackage) error {
+	files, err := os.ReadDir(pm.config.RepoArchDir)
 	if err != nil {
 		return fmt.Errorf("failed to read local directory: %w", err)
 	}
 
+	removedCount := 0
 	for _, file := range files {
 		if !file.IsDir() && strings.HasSuffix(file.Name(), ".pkg.tar.zst") {
 			if _, exists := remotePackages[file.Name()]; !exists {
-				err := os.Remove(filepath.Join(localDir, file.Name()))
-				if err != nil {
+				filePath := filepath.Join(pm.config.RepoArchDir, file.Name())
+				pm.config.verboseLog("Removing orphaned package: %s", file.Name())
+				if err := os.Remove(filePath); err != nil {
 					return fmt.Errorf("failed to remove orphaned package %s: %w", file.Name(), err)
 				}
+				removedCount++
 			}
 		}
 	}
+
+	if removedCount > 0 {
+		pm.config.infoLog("Removed %d orphaned packages", removedCount)
+	}
+
 	return nil
 }
 
-func downloadNewPackages(localDir string, remotePackages map[string]RemotePackage, cfg *Config) error {
+func (pm *PackageManager) downloadNewPackages(remotePackages map[string]RemotePackage) error {
+	downloadedCount := 0
 	for filename, pkg := range remotePackages {
-		localPath := filepath.Join(localDir, filename)
+		localPath := filepath.Join(pm.config.RepoArchDir, filename)
 		if _, err := os.Stat(localPath); os.IsNotExist(err) {
-			err := downloadFile(localPath, pkg.URL, cfg)
-			if err != nil {
-				os.Remove(localPath)
+			pm.config.verboseLog("Downloading package: %s", filename)
+			if err := pm.downloadFile(localPath, pkg.URL); err != nil {
+				pm.config.debugLog("Failed to download %s: %v", filename, err)
+				os.Remove(localPath) // Clean up partial download
+				continue
 			}
+			downloadedCount++
 		}
 	}
+
+	if downloadedCount > 0 {
+		pm.config.infoLog("Downloaded %d new packages", downloadedCount)
+	}
+
 	return nil
 }
 
-func downloadFile(filepath string, url string, cfg *Config) error {
+func (pm *PackageManager) downloadFile(filepath string, url string) error {
 	resp, err := http.Get(url)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get %s: %w", url, err)
 	}
 	defer resp.Body.Close()
 
@@ -602,77 +745,88 @@ func downloadFile(filepath string, url string, cfg *Config) error {
 
 	out, err := os.Create(filepath)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to create file %s: %w", filepath, err)
 	}
 	defer out.Close()
 
 	_, err = io.Copy(out, resp.Body)
-	return err
+	if err != nil {
+		return fmt.Errorf("failed to write file %s: %w", filepath, err)
+	}
+
+	return nil
 }
 
-func updateRepoDatabase(repoDir, repoName string, cfg *Config) error {
+func (pm *PackageManager) updateRepoDatabase() error {
 	originalDir, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("failed to get current directory: %w", err)
 	}
 	defer os.Chdir(originalDir)
 
-	if err := os.Chdir(repoDir); err != nil {
+	if err := os.Chdir(pm.config.RepoArchDir); err != nil {
 		return fmt.Errorf("failed to change directory: %w", err)
 	}
 
+	// Remove existing database files
 	dbFiles := []string{
-		repoName + ".db",
-		repoName + ".db.tar.gz",
-		repoName + ".files",
-		repoName + ".files.tar.gz",
+		pm.config.RepoName + ".db",
+		pm.config.RepoName + ".db.tar.gz",
+		pm.config.RepoName + ".files",
+		pm.config.RepoName + ".files.tar.gz",
 	}
 
 	for _, file := range dbFiles {
 		os.Remove(file)
 	}
 
+	// Check for package files
 	matches, err := filepath.Glob("*.pkg.tar.zst")
 	if err != nil {
 		return fmt.Errorf("failed to check for packages: %w", err)
 	}
 
 	if len(matches) > 0 {
-		args := append([]string{repoName + ".db.tar.gz"}, matches...)
+		args := append([]string{pm.config.RepoName + ".db.tar.gz"}, matches...)
 		cmd := exec.Command("repo-add", args...)
-		if cfg.Debug {
+		if pm.config.Debug {
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
 		}
 		if err := cmd.Run(); err != nil {
 			return fmt.Errorf("failed to run repo-add: %w", err)
 		}
+		pm.config.infoLog("Updated repository database with %d packages", len(matches))
 	} else {
-		os.WriteFile(repoName+".db.tar.gz", []byte{}, 0644)
-		os.WriteFile(repoName+".files.tar.gz", []byte{}, 0644)
+		// Create empty database files
+		os.WriteFile(pm.config.RepoName+".db.tar.gz", []byte{}, 0644)
+		os.WriteFile(pm.config.RepoName+".files.tar.gz", []byte{}, 0644)
+		pm.config.infoLog("Created empty repository database")
 	}
 
-	os.Remove(repoName + ".db")
-	os.Remove(repoName + ".files")
-	os.Symlink(repoName+".db.tar.gz", repoName+".db")
-	os.Symlink(repoName+".files.tar.gz", repoName+".files")
+	// Create symlinks
+	os.Remove(pm.config.RepoName + ".db")
+	os.Remove(pm.config.RepoName + ".files")
+	os.Symlink(pm.config.RepoName+".db.tar.gz", pm.config.RepoName+".db")
+	os.Symlink(pm.config.RepoName+".files.tar.gz", pm.config.RepoName+".files")
 
 	return nil
 }
 
-func generatePackagesJSON(repoDir, apiDir string, cfg *Config) error {
+func (pm *PackageManager) generatePackagesJSON() error {
 	var packageList []PackageInfo
 
-	files, err := os.ReadDir(repoDir)
+	files, err := os.ReadDir(pm.config.RepoArchDir)
 	if err != nil {
 		return fmt.Errorf("failed to read repository directory: %w", err)
 	}
 
 	for _, file := range files {
 		if !file.IsDir() && strings.HasSuffix(file.Name(), ".pkg.tar.zst") {
-			pkgPath := filepath.Join(repoDir, file.Name())
-			pkgInfo, err := extractPackageInfo(pkgPath, cfg)
+			pkgPath := filepath.Join(pm.config.RepoArchDir, file.Name())
+			pkgInfo, err := pm.extractPackageInfo(pkgPath)
 			if err != nil {
+				pm.config.debugLog("Failed to extract package info for %s: %v", file.Name(), err)
 				continue
 			}
 			packageList = append(packageList, *pkgInfo)
@@ -684,17 +838,17 @@ func generatePackagesJSON(repoDir, apiDir string, cfg *Config) error {
 		return fmt.Errorf("failed to marshal JSON: %w", err)
 	}
 
-	outputPath := filepath.Join(apiDir, "packages.json")
+	outputPath := filepath.Join(pm.config.APIDir, "packages.json")
 	err = os.WriteFile(outputPath, jsonData, 0644)
 	if err != nil {
 		return fmt.Errorf("failed to write packages.json: %w", err)
 	}
 
-	fmt.Printf("[INFO] Generated packages.json with %d packages\n", len(packageList))
+	pm.config.infoLog("Generated packages.json with %d packages", len(packageList))
 	return nil
 }
 
-func extractPackageInfo(pkgPath string, cfg *Config) (*PackageInfo, error) {
+func (pm *PackageManager) extractPackageInfo(pkgPath string) (*PackageInfo, error) {
 	cmd := exec.Command("pacman", "-Qip", pkgPath)
 	output, err := cmd.Output()
 	if err != nil {
@@ -743,44 +897,17 @@ func extractPackageInfo(pkgPath string, cfg *Config) (*PackageInfo, error) {
 	return info, nil
 }
 
-func commitAndPushBranch(branchName, message string) error {
-	cmd := exec.Command("git", "config", "user.name", "GitLab CI/Package Manager")
-	if err := cmd.Run(); err != nil {
-		return err
-	}
-	cmd = exec.Command("git", "config", "user.email", "ci@prismlinux.org")
-	if err := cmd.Run(); err != nil {
-		return err
-	}
-
-	// Remove ALL files except .git
-	cmd = exec.Command("git", "rm", "-rf", "--ignore-unmatch", ".")
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to remove all files: %w", err)
-	}
-
-	// Add back only the public/ directory
-	cmd = exec.Command("git", "add", "public/")
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to add public/: %w", err)
-	}
-
-	// Commit
-	cmd = exec.Command("git", "commit", "-m", message, "--allow-empty")
-	if err := cmd.Run(); err != nil {
-		if !strings.Contains(err.Error(), "nothing to commit") {
-			return err
-		}
-	}
-
-	// Push (force-with-lease is safe for artifact branches)
-	cmd = exec.Command("git", "push", "origin", branchName, "--force-with-lease")
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to push branch %s: %w", branchName, err)
-	}
-
-	fmt.Printf("✅ Branch '%s' updated with only 'public/' directory\n", branchName)
-	return nil
+func init() {
+	RootCmd.Flags().String("repo-name", "prismlinux", "Repository name")
+	RootCmd.Flags().String("repo-arch-dir", "public/x86_64", "Architecture-specific repo directory")
+	RootCmd.Flags().String("api-dir", "public/api", "API directory for metadata")
+	RootCmd.Flags().String("gitlab-token", "", "GitLab token (overrides GITLAB_TOKEN env)")
+	RootCmd.Flags().String("project-id", "", "GitLab project ID (overrides CI_PROJECT_ID env)")
+	RootCmd.Flags().Bool("commit", false, "Commit and push to 'packages' branch")
+	RootCmd.Flags().Bool("test", false, "Test mode - use test-packages branch, no push")
+	RootCmd.Flags().Bool("clean", false, "Clean mode - remove all packages and repo files")
+	RootCmd.Flags().Bool("debug", false, "Enable debug output")
+	RootCmd.Flags().Bool("verbose", false, "Enable verbose output")
 }
 
 func main() {

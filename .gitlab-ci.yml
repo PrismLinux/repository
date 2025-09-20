@@ -20,6 +20,10 @@ image: archlinux:latest
 variables:
   REPO_NAME: "prismlinux"
   REPO_DIR: "public"
+  GIT_STRATEGY: clone
+  GIT_DEPTH: 0
+  # Use custom GitLab token with proper permissions
+  # GITLAB_TOKEN: $GITLAB_API_TOKEN  # Set this as a CI variable
 
 workflow:
   rules:
@@ -30,6 +34,9 @@ workflow:
         - .gitlab-ci.yml
         - packages_id.txt
         - remote_packages.txt
+        - "*.go"
+        - go.mod
+        - go.sum
 
 cache:
   key: "repo-cache-${CI_COMMIT_REF_SLUG}"
@@ -37,14 +44,24 @@ cache:
     - "${REPO_DIR}/x86_64/"
   policy: pull-push
 
+# Production deployment
 pages:
   stage: deploy
-  pages: true
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 
   before_script:
     - pacman -Syu --noconfirm
     - pacman -S --noconfirm curl jq base-devel git go
+    - git config --global user.name "GitLab CI/Package Manager"
+    - git config --global user.email "ci@prismlinux.org"
+    - git config --global init.defaultBranch main
     - go version
+    - echo "Git configuration:"
+    - git config --list | grep -E "(user|init)"
+    - echo "Repository state:"
+    - git status || echo "Not in git repository"
+    - git branch -a || echo "No branches found"
 
   script: |
     set -eo pipefail
@@ -52,16 +69,80 @@ pages:
     echo "Building package manager..."
     go build -o package-manager .
 
+    echo "=== PRE-EXECUTION STATE ==="
+    echo "Current directory contents:"
+    ls -la
+    echo "Public directory (if exists):"
+    ls -la public/ || echo "Public directory doesn't exist yet"
+    echo "Git status:"
+    git status || echo "Not in git repository"
+    echo "=============================="
+
     echo "Running package manager with commit enabled..."
-    ./package-manager --commit
+    # Use the custom GitLab API token if available
+    if [ -n "$GITLAB_API_TOKEN" ]; then
+      echo "Using custom GitLab API token..."
+      ./package-manager --commit --verbose --gitlab-token="$GITLAB_API_TOKEN"
+    else
+      echo "No GitLab token available, processing only remote packages..."
+      ./package-manager --commit --verbose --gitlab-token=""
+    fi
+
+    echo "=== POST-EXECUTION STATE ==="
+    echo "Git status:"
+    git status || echo "Not in git repository"
+    echo "Git branches:"
+    git branch -a || echo "No branches found"
+    echo "Package branch log (if exists):"
+    git log --oneline packages -10 || echo "Packages branch not found"
+    echo "=============================="
 
     echo "Package management completed successfully."
 
     echo "-----------------------------------------"
     echo "Final check before artifact upload:"
-    ls -laR public
+    if [ -d "public" ]; then
+      echo "Public directory structure:"
+      find public -type f -exec ls -lh {} \; | head -20
+      echo "..."
+      echo "Total files in public/:"
+      find public -type f | wc -l
+    else
+      echo "❌ ERROR: Public directory not found!"
+      exit 1
+    fi
     echo "-----------------------------------------"
 
   artifacts:
     paths:
       - public
+    expire_in: 7 days
+
+# Clean up stage (manual trigger only)
+cleanup:
+  stage: deploy
+  when: manual
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+  before_script:
+    - pacman -Syu --noconfirm
+    - pacman -S --noconfirm curl jq base-devel git go
+    - git config --global user.name "GitLab CI/Cleanup"
+    - git config --global user.email "ci-cleanup@prismlinux.org"
+    - go version
+
+  script:
+    - echo "Building package manager..."
+    - go build -o package-manager .
+
+    - echo "⚠️  CLEANUP MODE - This will remove all packages!"
+    - echo "Running cleanup..."
+    - ./package-manager --clean --commit --verbose
+
+    - echo "Cleanup completed!"
+
+  artifacts:
+    paths:
+      - public
+    expire_in: 1 day
