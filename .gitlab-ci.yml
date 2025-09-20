@@ -22,7 +22,6 @@ variables:
   REPO_DIR: "public"
   GIT_STRATEGY: clone
   GIT_DEPTH: 0
-  GITLAB_TOKEN: $GITLAB_API_TOKEN
 
 workflow:
   rules:
@@ -43,7 +42,6 @@ cache:
     - "${REPO_DIR}/x86_64/"
   policy: pull-push
 
-# Production deployment
 pages:
   stage: deploy
   rules:
@@ -53,15 +51,18 @@ pages:
     - pacman -Syu --noconfirm
     - pacman -S --noconfirm curl jq base-devel git go
     - git config --global user.name "GitLab CI/Package Manager"
-    - git config --global user.email "ci@prismlinux.org"
+    - git config --global user.email "CI@prismlinux.org"
     - git config --global init.defaultBranch main
-    - git remote set-url origin https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git
+    - |
+      if [ -n "$GITLAB_API_TOKEN" ]; then
+        echo "Configuring git with Personal Access Token..."
+        git remote set-url origin "https://oauth2:${GITLAB_API_TOKEN}@${CI_SERVER_HOST#https://}/${CI_PROJECT_PATH}.git"
+        echo "Git remote URL configured successfully"
+      else
+        echo "ERROR: GITLAB_API_TOKEN not found! Please add it to CI/CD variables."
+        exit 1
+      fi
     - go version
-    - echo "Git configuration:"
-    - git config --list | grep -E "(user|init)"
-    - echo "Repository state:"
-    - git status || echo "Not in git repository"
-    - git branch -a || echo "No branches found"
 
   script: |
     set -eo pipefail
@@ -74,25 +75,22 @@ pages:
     ls -la
     echo "Public directory (if exists):"
     ls -la public/ || echo "Public directory doesn't exist yet"
-    echo "Git status:"
-    git status || echo "Not in git repository"
     echo "=============================="
 
     echo "Running package manager with commit enabled..."
-    # Use CI_JOB_TOKEN instead of GITLAB_API_TOKEN for GitLab API calls
-    if [ -n "$CI_JOB_TOKEN" ]; then
-      echo "Using CI job token for GitLab API..."
-      ./package-manager --commit --verbose --gitlab-token="$CI_JOB_TOKEN"
+    if [ -n "$GITLAB_API_TOKEN" ]; then
+      echo "Using Personal Access Token for GitLab operations..."
+      ./package-manager --commit --verbose --gitlab-token="$GITLAB_API_TOKEN"
     else
-      echo "No GitLab token available, processing only remote packages..."
-      ./package-manager --commit --verbose --gitlab-token=""
+      echo "ERROR: No GitLab token available!"
+      exit 1
     fi
 
     echo "=== POST-EXECUTION STATE ==="
     echo "Git status:"
     git status || echo "Not in git repository"
-    echo "Git branches:"
-    git branch -a || echo "No branches found"
+    echo "Git log (last 3 commits on packages branch):"
+    git log --oneline -3 packages || echo "No commits found on packages branch"
     echo "Public directory check:"
     if [ -d "public" ]; then
       echo "Public directory exists:"
@@ -100,33 +98,17 @@ pages:
       echo "Total files in public: $(find public -type f | wc -l)"
     else
       echo "❌ Public directory missing!"
+      exit 1
     fi
-    echo "Package branch log (if exists):"
-    git log --oneline packages -10 || echo "Packages branch not found"
     echo "=============================="
 
     echo "Package management completed successfully."
-
-    echo "-----------------------------------------"
-    echo "Final check before artifact upload:"
-    if [ -d "public" ]; then
-      echo "Public directory structure:"
-      find public -type f -exec ls -lh {} \; | head -20
-      echo "..."
-      echo "Total files in public/:"
-      find public -type f | wc -l
-    else
-      echo "❌ ERROR: Public directory not found!"
-      exit 1
-    fi
-    echo "-----------------------------------------"
 
   artifacts:
     paths:
       - public
     expire_in: 7 days
 
-# Clean up stage (manual trigger only)
 cleanup:
   stage: deploy
   when: manual
@@ -138,16 +120,21 @@ cleanup:
     - pacman -S --noconfirm curl jq base-devel git go
     - git config --global user.name "GitLab CI/Cleanup"
     - git config --global user.email "ci-cleanup@prismlinux.org"
+    - |
+      if [ -n "$GITLAB_API_TOKEN" ]; then
+        git remote set-url origin "https://oauth2:${GITLAB_API_TOKEN}@${CI_SERVER_HOST#https://}/${CI_PROJECT_PATH}.git"
+      else
+        echo "ERROR: GITLAB_API_TOKEN not found!"
+        exit 1
+      fi
     - go version
 
   script:
     - echo "Building package manager..."
     - go build -o package-manager .
-
     - echo "⚠️  CLEANUP MODE - This will remove all packages!"
     - echo "Running cleanup..."
-    - ./package-manager --clean --commit --verbose
-
+    - ./package-manager --clean --commit --verbose --gitlab-token="$GITLAB_API_TOKEN"
     - echo "Cleanup completed!"
 
   artifacts:
