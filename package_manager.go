@@ -138,8 +138,6 @@ func NewConfig(cmd *cobra.Command) (*Config, error) {
 	cfg.Debug, _ = cmd.Flags().GetBool("debug")
 	cfg.Verbose, _ = cmd.Flags().GetBool("verbose")
 
-	// GitLab token is optional - the tool can work without it
-	// It will just process remote_packages.txt instead of GitLab releases
 	if cfg.GitLabToken == "" && !cfg.CleanMode {
 		cfg.debugLog("No GitLab token provided - will only process remote packages from remote_packages.txt")
 	}
@@ -160,8 +158,68 @@ var RootCmd = &cobra.Command{
 	},
 }
 
+func readRemotePackages() ([]RemotePackage, error) {
+	var packages []RemotePackage
+
+	file, err := os.Open("remote_packages.txt")
+	if os.IsNotExist(err) {
+		return packages, nil
+	} else if err != nil {
+		return nil, fmt.Errorf("failed to open remote_packages.txt: %w", err)
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		url := strings.TrimSpace(scanner.Text())
+		if url == "" || strings.HasPrefix(url, "#") {
+			continue
+		}
+		if strings.HasSuffix(url, ".pkg.tar.zst") {
+			filename := filepath.Base(strings.Split(url, "?")[0])
+			if filename != "" {
+				packages = append(packages, RemotePackage{Filename: filename, URL: url})
+			}
+		}
+	}
+
+	return packages, scanner.Err()
+}
+
+func readProjectIDs(filename string) ([]string, error) {
+	file, err := os.Open(filename)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open %s: %w", filename, err)
+	}
+	defer file.Close()
+
+	var ids []string
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		parts := strings.Fields(line)
+		if len(parts) > 0 {
+			ids = append(ids, parts[0])
+		}
+	}
+	return ids, scanner.Err()
+}
+
 func runPackageManagement(cfg *Config) error {
 	cfg.debugLog("Starting with config: %+v", cfg)
+
+	// Read files before git setup
+	remotePackagesFromFile, err := readRemotePackages()
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to read remote_packages.txt: %w", err)
+	}
+	projectIDs, err := readProjectIDs("packages_id.txt")
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to read packages_id.txt: %w", err)
+	}
 
 	// Initialize managers
 	pm, err := NewPackageManager(cfg)
@@ -188,7 +246,7 @@ func runPackageManagement(cfg *Config) error {
 	}
 
 	// Main package management workflow
-	if err := pm.syncPackages(); err != nil {
+	if err := pm.syncPackages(remotePackagesFromFile, projectIDs); err != nil {
 		return err
 	}
 
@@ -332,6 +390,8 @@ func (gm *GitManager) setupTestBranch() error {
 	}
 
 	cmd := exec.Command("git", "checkout", defaultBranch)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("failed to checkout default branch '%s': %w", defaultBranch, err)
 	}
@@ -340,6 +400,8 @@ func (gm *GitManager) setupTestBranch() error {
 	exec.Command("git", "branch", "-D", branchName).Run()
 
 	cmd = exec.Command("git", "checkout", "-b", branchName)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("failed to create test branch '%s': %w", branchName, err)
 	}
@@ -355,6 +417,8 @@ func (gm *GitManager) checkoutOrCreateBranch(branchName string) error {
 
 	// Try to checkout existing branch
 	cmd := exec.Command("git", "checkout", branchName)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err == nil {
 		fmt.Printf("Checked out existing branch '%s'\n", branchName)
 		return nil
@@ -367,11 +431,15 @@ func (gm *GitManager) checkoutOrCreateBranch(branchName string) error {
 	}
 
 	cmd = exec.Command("git", "checkout", defaultBranch)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("failed to checkout default branch '%s': %w", defaultBranch, err)
 	}
 
 	cmd = exec.Command("git", "checkout", "-b", branchName)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("failed to create branch '%s': %w", branchName, err)
 	}
@@ -382,13 +450,15 @@ func (gm *GitManager) checkoutOrCreateBranch(branchName string) error {
 
 func (gm *GitManager) ensureGitRepo() error {
 	cmd := exec.Command("git", "rev-parse", "--git-dir")
-	cmd.Stderr = nil
+	cmd.Stderr = os.Stderr
 	return cmd.Run()
 }
 
 func (gm *GitManager) getDefaultBranch() (string, error) {
 	// Try to get the default branch from remote
 	cmd := exec.Command("git", "symbolic-ref", "refs/remotes/origin/HEAD")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 	if output, err := cmd.Output(); err == nil {
 		parts := strings.Split(strings.TrimSpace(string(output)), "/")
 		if len(parts) > 0 {
@@ -423,13 +493,17 @@ func (gm *GitManager) initializeGitRepo() error {
 	}
 
 	cmd := exec.Command("git", "init")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("failed to initialize git repository: %w", err)
 	}
 
 	// Set git configuration
-	exec.Command("git", "config", "user.name", "Package Manager").Run()
-	exec.Command("git", "config", "user.email", "package-manager@prismlinux.org").Run()
+	cmd = exec.Command("git", "config", "user.name", "Package Manager")
+	cmd.Run()
+	cmd = exec.Command("git", "config", "user.email", "package-manager@prismlinux.org")
+	cmd.Run()
 
 	// Create initial README if it doesn't exist
 	if _, err := os.Stat("README.md"); os.IsNotExist(err) {
@@ -440,11 +514,15 @@ func (gm *GitManager) initializeGitRepo() error {
 	}
 
 	cmd = exec.Command("git", "add", "README.md")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("failed to add README.md: %w", err)
 	}
 
 	cmd = exec.Command("git", "commit", "-m", "Initial commit")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("failed to create initial commit: %w", err)
 	}
@@ -456,18 +534,23 @@ func (gm *GitManager) initializeGitRepo() error {
 func (gm *GitManager) commitAndPushBranch(branchName, message string) error {
 	// Set git user configuration for CI
 	cmd := exec.Command("git", "config", "user.name", "GitLab CI/Package Manager")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("failed to set git user name: %w", err)
 	}
 
 	cmd = exec.Command("git", "config", "user.email", "ci@prismlinux.org")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("failed to set git user email: %w", err)
 	}
 
-	// FIXED: Safely remove all tracked files except .git directory
 	// Get list of all tracked files
 	cmd = exec.Command("git", "ls-files")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 	output, err := cmd.Output()
 	if err != nil {
 		return fmt.Errorf("failed to list git files: %w", err)
@@ -479,28 +562,38 @@ func (gm *GitManager) commitAndPushBranch(branchName, message string) error {
 		files := strings.Split(trackedFiles, "\n")
 		// Remove files in batches to avoid command line length limits
 		for i := 0; i < len(files); i += 100 {
-			end := i + 100
-			if end > len(files) {
-				end = len(files)
-			}
+			end := min(i+100, len(files))
 			batch := files[i:end]
 
 			args := append([]string{"rm", "-f", "--ignore-unmatch"}, batch...)
 			cmd = exec.Command("git", args...)
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
 			if err := cmd.Run(); err != nil {
 				return fmt.Errorf("failed to remove tracked files batch: %w", err)
 			}
 		}
 	}
 
+	// Log current directory before add
+	current, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to get current directory: %w", err)
+	}
+	gm.config.debugLog("Current directory before git add: %s", current)
+
 	// Add back only the public/ directory
 	cmd = exec.Command("git", "add", "public/")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("failed to add public/: %w", err)
 	}
 
 	// Commit changes
 	cmd = exec.Command("git", "commit", "-m", message, "--allow-empty")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		// Check if it's just a "nothing to commit" message
 		if !strings.Contains(err.Error(), "nothing to commit") {
@@ -510,6 +603,8 @@ func (gm *GitManager) commitAndPushBranch(branchName, message string) error {
 
 	// Push with force-with-lease (safe for artifact branches)
 	cmd = exec.Command("git", "push", "origin", branchName, "--force-with-lease")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("failed to push branch %s: %w", branchName, err)
 	}
@@ -519,22 +614,16 @@ func (gm *GitManager) commitAndPushBranch(branchName, message string) error {
 }
 
 // PackageManager methods
-func (pm *PackageManager) syncPackages() error {
-	// Read remote packages
-	remotePackages, err := pm.readRemotePackages()
-	if err != nil {
-		return fmt.Errorf("failed to read remote package lists: %w", err)
-	}
-
+func (pm *PackageManager) syncPackages(remotePackagesFromFile []RemotePackage, projectIDs []string) error {
 	// Fetch GitLab packages
-	gitlabPackages, err := pm.fetchGitLabPackages()
+	gitlabPackages, err := pm.fetchGitLabPackages(projectIDs)
 	if err != nil {
 		return fmt.Errorf("failed to fetch packages from GitLab releases: %w", err)
 	}
 
 	// Combine all remote packages
 	allRemotePackages := make(map[string]RemotePackage)
-	for _, pkg := range remotePackages {
+	for _, pkg := range remotePackagesFromFile {
 		allRemotePackages[pkg.Filename] = pkg
 	}
 	for _, pkg := range gitlabPackages {
@@ -600,36 +689,7 @@ func (pm *PackageManager) cleanAllFiles(gitMgr *GitManager, fileMgr *FileManager
 	return nil
 }
 
-func (pm *PackageManager) readRemotePackages() ([]RemotePackage, error) {
-	var packages []RemotePackage
-
-	file, err := os.Open("remote_packages.txt")
-	if os.IsNotExist(err) {
-		pm.config.infoLog("remote_packages.txt not found. No remote HTTPS packages to process.")
-		return packages, nil
-	} else if err != nil {
-		return nil, fmt.Errorf("failed to open remote_packages.txt: %w", err)
-	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		url := strings.TrimSpace(scanner.Text())
-		if url == "" || strings.HasPrefix(url, "#") {
-			continue
-		}
-		if strings.HasSuffix(url, ".pkg.tar.zst") {
-			filename := filepath.Base(strings.Split(url, "?")[0])
-			if filename != "" {
-				packages = append(packages, RemotePackage{Filename: filename, URL: url})
-			}
-		}
-	}
-
-	return packages, scanner.Err()
-}
-
-func (pm *PackageManager) fetchGitLabPackages() ([]RemotePackage, error) {
+func (pm *PackageManager) fetchGitLabPackages(projectIDs []string) ([]RemotePackage, error) {
 	var packages []RemotePackage
 
 	if pm.gitlabClient == nil {
@@ -637,10 +697,9 @@ func (pm *PackageManager) fetchGitLabPackages() ([]RemotePackage, error) {
 		return packages, nil
 	}
 
-	projectIDs, err := pm.readProjectIDs("packages_id.txt")
-	if err != nil {
-		pm.config.infoLog("No packages_id.txt found or error reading it, skipping GitLab packages: %v", err)
-		return packages, nil // Don't fail, just skip GitLab packages
+	if len(projectIDs) == 0 {
+		pm.config.infoLog("No project IDs provided, skipping GitLab packages")
+		return packages, nil
 	}
 
 	for _, projectID := range projectIDs {
@@ -666,28 +725,6 @@ func (pm *PackageManager) fetchGitLabPackages() ([]RemotePackage, error) {
 	}
 
 	return packages, nil
-}
-
-func (pm *PackageManager) readProjectIDs(filename string) ([]string, error) {
-	file, err := os.Open(filename)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open %s: %w", filename, err)
-	}
-	defer file.Close()
-
-	var ids []string
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		parts := strings.Fields(line)
-		if len(parts) > 0 {
-			ids = append(ids, parts[0])
-		}
-	}
-	return ids, scanner.Err()
 }
 
 func (pm *PackageManager) removeOrphanedPackages(remotePackages map[string]RemotePackage) error {
@@ -769,11 +806,17 @@ func (pm *PackageManager) updateRepoDatabase() error {
 	if err != nil {
 		return fmt.Errorf("failed to get current directory: %w", err)
 	}
-	defer os.Chdir(originalDir)
 
 	if err := os.Chdir(pm.config.RepoArchDir); err != nil {
-		return fmt.Errorf("failed to change directory: %w", err)
+		return fmt.Errorf("failed to change directory to %s: %w", pm.config.RepoArchDir, err)
 	}
+
+	defer func() {
+		if chdirErr := os.Chdir(originalDir); chdirErr != nil {
+			fmt.Fprintf(os.Stderr, "Failed to change back to original directory %s: %v\n", originalDir, chdirErr)
+			os.Exit(1)
+		}
+	}()
 
 	// Remove existing database files
 	dbFiles := []string{
@@ -796,6 +839,8 @@ func (pm *PackageManager) updateRepoDatabase() error {
 	if len(matches) > 0 {
 		args := append([]string{pm.config.RepoName + ".db.tar.gz"}, matches...)
 		cmd := exec.Command("repo-add", args...)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
 		if pm.config.Debug {
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
@@ -857,6 +902,8 @@ func (pm *PackageManager) generatePackagesJSON() error {
 
 func (pm *PackageManager) extractPackageInfo(pkgPath string) (*PackageInfo, error) {
 	cmd := exec.Command("pacman", "-Qip", pkgPath)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 	output, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("pacman -Qip failed: %w", err)

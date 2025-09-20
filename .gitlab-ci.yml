@@ -22,8 +22,7 @@ variables:
   REPO_DIR: "public"
   GIT_STRATEGY: clone
   GIT_DEPTH: 0
-  # Use custom GitLab token with proper permissions
-  # GITLAB_TOKEN: $GITLAB_API_TOKEN  # Set this as a CI variable
+  GITLAB_TOKEN: $GITLAB_API_TOKEN
 
 workflow:
   rules:
