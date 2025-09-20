@@ -71,12 +71,16 @@ type PackageManager struct {
 func NewPackageManager(cfg *Config) (*PackageManager, error) {
 	pm := &PackageManager{config: cfg}
 
+	// Only create GitLab client if we have a token AND we're not in clean mode
 	if cfg.GitLabToken != "" && !cfg.CleanMode {
 		git, err := gitlab.NewClient(cfg.GitLabToken)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create GitLab client: %w", err)
 		}
 		pm.gitlabClient = git
+		cfg.debugLog("GitLab client initialized successfully")
+	} else {
+		cfg.debugLog("Skipping GitLab client initialization (no token or clean mode)")
 	}
 
 	return pm, nil
@@ -134,9 +138,10 @@ func NewConfig(cmd *cobra.Command) (*Config, error) {
 	cfg.Debug, _ = cmd.Flags().GetBool("debug")
 	cfg.Verbose, _ = cmd.Flags().GetBool("verbose")
 
-	// Validate required configuration
+	// GitLab token is optional - the tool can work without it
+	// It will just process remote_packages.txt instead of GitLab releases
 	if cfg.GitLabToken == "" && !cfg.CleanMode {
-		return nil, fmt.Errorf("GITLAB_TOKEN is required (set via flag or environment variable)")
+		cfg.debugLog("No GitLab token provided - will only process remote packages from remote_packages.txt")
 	}
 
 	return cfg, nil
@@ -628,12 +633,14 @@ func (pm *PackageManager) fetchGitLabPackages() ([]RemotePackage, error) {
 	var packages []RemotePackage
 
 	if pm.gitlabClient == nil {
+		pm.config.infoLog("No GitLab client available, skipping GitLab packages")
 		return packages, nil
 	}
 
 	projectIDs, err := pm.readProjectIDs("packages_id.txt")
 	if err != nil {
-		return nil, err
+		pm.config.infoLog("No packages_id.txt found or error reading it, skipping GitLab packages: %v", err)
+		return packages, nil // Don't fail, just skip GitLab packages
 	}
 
 	for _, projectID := range projectIDs {
@@ -664,7 +671,7 @@ func (pm *PackageManager) fetchGitLabPackages() ([]RemotePackage, error) {
 func (pm *PackageManager) readProjectIDs(filename string) ([]string, error) {
 	file, err := os.Open(filename)
 	if err != nil {
-		return nil, fmt.Errorf("packages_id.txt not found: %w", err)
+		return nil, fmt.Errorf("failed to open %s: %w", filename, err)
 	}
 	defer file.Close()
 
