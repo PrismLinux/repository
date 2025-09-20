@@ -93,6 +93,14 @@ pages:
     git status || echo "Not in git repository"
     echo "Git branches:"
     git branch -a || echo "No branches found"
+    echo "Public directory check:"
+    if [ -d "public" ]; then
+      echo "Public directory exists:"
+      find public -type f | head -10 || echo "No files in public"
+      echo "Total files in public: $(find public -type f | wc -l)"
+    else
+      echo "❌ Public directory missing!"
+    fi
     echo "Package branch log (if exists):"
     git log --oneline packages -10 || echo "Packages branch not found"
     echo "=============================="
