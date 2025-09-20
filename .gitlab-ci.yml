@@ -55,6 +55,7 @@ pages:
     - git config --global user.name "GitLab CI/Package Manager"
     - git config --global user.email "ci@prismlinux.org"
     - git config --global init.defaultBranch main
+    - git remote set-url origin https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git
     - go version
     - echo "Git configuration:"
     - git config --list | grep -E "(user|init)"
@@ -78,10 +79,10 @@ pages:
     echo "=============================="
 
     echo "Running package manager with commit enabled..."
-    # Use the custom GitLab API token if available
-    if [ -n "$GITLAB_API_TOKEN" ]; then
-      echo "Using custom GitLab API token..."
-      ./package-manager --commit --verbose --gitlab-token="$GITLAB_API_TOKEN"
+    # Use CI_JOB_TOKEN instead of GITLAB_API_TOKEN for GitLab API calls
+    if [ -n "$CI_JOB_TOKEN" ]; then
+      echo "Using CI job token for GitLab API..."
+      ./package-manager --commit --verbose --gitlab-token="$CI_JOB_TOKEN"
     else
       echo "No GitLab token available, processing only remote packages..."
       ./package-manager --commit --verbose --gitlab-token=""

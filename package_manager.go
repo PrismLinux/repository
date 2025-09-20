@@ -538,14 +538,46 @@ func (gm *GitManager) commitAndPushBranch(branchName, message string) error {
 		return fmt.Errorf("failed to set git user name: %w", err)
 	}
 
-	cmd = exec.Command("git", "config", "user.email", "ci@prismlinux.org")
+	cmd = exec.Command("git", "config", "user.email", "CI@prismlinux.org")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("failed to set git user email: %w", err)
 	}
 
-	// FIXED: Safely remove all tracked files except .git directory
+	// Configure git to use token authentication if we're in CI
+	if ciToken := os.Getenv("CI_JOB_TOKEN"); ciToken != "" {
+		// Use CI_JOB_TOKEN for authentication
+		serverHost := os.Getenv("CI_SERVER_HOST")
+		projectPath := os.Getenv("CI_PROJECT_PATH")
+		if serverHost != "" && projectPath != "" {
+			remoteURL := fmt.Sprintf("https://gitlab-ci-token:%s@%s/%s.git", ciToken, serverHost, projectPath)
+			cmd := exec.Command("git", "remote", "set-url", "origin", remoteURL)
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			if err := cmd.Run(); err != nil {
+				gm.config.debugLog("Warning: failed to set remote URL: %v", err)
+			} else {
+				gm.config.debugLog("Set git remote URL for CI authentication")
+			}
+		}
+	} else if gitlabToken := os.Getenv("GITLAB_API_TOKEN"); gitlabToken != "" {
+		// Fallback to GITLAB_API_TOKEN
+		serverHost := os.Getenv("CI_SERVER_HOST")
+		projectPath := os.Getenv("CI_PROJECT_PATH")
+		if serverHost != "" && projectPath != "" {
+			remoteURL := fmt.Sprintf("https://oauth2:%s@%s/%s.git", gitlabToken, serverHost, projectPath)
+			cmd := exec.Command("git", "remote", "set-url", "origin", remoteURL)
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			if err := cmd.Run(); err != nil {
+				gm.config.debugLog("Warning: failed to set remote URL with API token: %v", err)
+			} else {
+				gm.config.debugLog("Set git remote URL for API token authentication")
+			}
+		}
+	}
+
 	// Get list of all tracked files
 	cmd = exec.Command("git", "ls-files")
 	output, err := cmd.Output()
@@ -559,10 +591,7 @@ func (gm *GitManager) commitAndPushBranch(branchName, message string) error {
 		files := strings.Split(trackedFiles, "\n")
 		// Remove files in batches to avoid command line length limits
 		for i := 0; i < len(files); i += 100 {
-			end := i + 100
-			if end > len(files) {
-				end = len(files)
-			}
+			end := min(i+100, len(files))
 			batch := files[i:end]
 
 			args := append([]string{"rm", "-f", "--ignore-unmatch"}, batch...)
