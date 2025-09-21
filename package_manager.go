@@ -125,14 +125,12 @@ func NewConfig(cmd *cobra.Command) (*Config, error) {
 
 	architecture := getStringFlag(cmd, "arch", "x86_64")
 
-	// Handle repository naming for testing mode
 	if cfg.TestingMode {
 		if !strings.HasSuffix(cfg.RepoName, "-testing") {
 			cfg.RepoName += "-testing"
 		}
 		cfg.RepoArchDir = getStringFlag(cmd, "repo-arch-dir", filepath.Join("testing", architecture))
 	} else {
-		// Remove testing suffix if present in stable mode
 		cfg.RepoName = strings.TrimSuffix(cfg.RepoName, "-testing")
 		cfg.RepoArchDir = getStringFlag(cmd, "repo-arch-dir", architecture)
 	}
@@ -378,7 +376,7 @@ func (pm *PackageManager) syncPackages(packagesConfig *PackagesConfig) error {
 }
 
 func containsRepository(repoList, target string) bool {
-	for repo := range strings.SplitSeq(repoList, ";") {
+	for _, repo := range strings.Split(repoList, ";") {
 		if strings.TrimSpace(repo) == target {
 			return true
 		}
