@@ -1,14 +1,11 @@
 gitlab_projects:
-  - id: 72073467
-    name: "Gaming Meta"
+  # Core
+  - id: 71571505
+    name: "Prism Mirrorlist"
     repository: "stable"
     enabled: true
-  - id: 72958263
-    name: "RateMirrors"
-    repository: "stable"
-    enabled: true
-  - id: 74020675
-    name: "Graphics"
+  - id: 71715668
+    name: "PrismLinux Hooks"
     repository: "stable"
     enabled: true
 
@@ -27,12 +24,18 @@ gitlab_projects:
     name: "About Prism Linux"
     repository: "stable"
     enabled: true
-  - id: 70964684
-    name: "PrismLinux Fish Theme"
-    repository: "stable"
-    enabled: true
   - id: 71465108
     name: "Prism Package manager"
+    repository: "stable"
+    enabled: true
+  - id: 72958263
+    name: "RateMirrors"
+    repository: "stable"
+    enabled: true
+
+  # Themes
+  - id: 70964684
+    name: "PrismLinux Fish Theme"
     repository: "stable"
     enabled: true
 
@@ -68,13 +71,13 @@ gitlab_projects:
     repository: "stable"
     enabled: true
 
-  # Core
-  - id: 71571505
-    name: "Prism Mirrorlist"
+  # Groups
+  - id: 74020675
+    name: "Graphics"
     repository: "stable"
     enabled: true
-  - id: 71715668
-    name: "PrismLinux Hooks"
+  - id: 72073467
+    name: "Gaming Meta"
     repository: "stable"
     enabled: true
 
