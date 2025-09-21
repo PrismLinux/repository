@@ -94,9 +94,19 @@ pages:
     echo "Building package manager..."
     go build -buildvcs=false -o pkg-mgr
 
-    echo "Running package manager..."
+    echo "Running package manager for Stable Repository..."
     if [ -n "$GITLAB_API_TOKEN" ]; then
       ./pkg-mgr --gitlab-token="$GITLAB_API_TOKEN" --verbose
+    else
+      echo "ERROR: No GitLab token available!"
+      exit 1
+    fi
+
+    echo "Committing changes to repository..."
+
+    echo "Running package manager for Testing Repository..."
+    if [ -n "$GITLAB_API_TOKEN" ]; then
+      ./pkg-mgr --gitlab-token="$GITLAB_API_TOKEN" --testing --verbose
     else
       echo "ERROR: No GitLab token available!"
       exit 1
