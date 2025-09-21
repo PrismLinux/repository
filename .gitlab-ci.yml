@@ -15,13 +15,13 @@
 # You should have received a copy of the GNU General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-image: archlinux:latest
+image: registry.gitlab.com/crystalnetwork-studio/dev-tooling/docker/pkgbuild-archlinux:latest
 
 variables:
   REPO_NAME: "prismlinux"
-  REPO_DIR: "public"
   GIT_STRATEGY: clone
   GIT_DEPTH: 0
+  GO_VERSION: "1.22"
 
 workflow:
   rules:
@@ -30,17 +30,29 @@ workflow:
     - if: ($CI_PIPELINE_SOURCE == 'push' || $CI_PIPELINE_SOURCE == 'merge_request_event')
       changes:
         - .gitlab-ci.yml
-        - packages_id.txt
-        - remote_packages.txt
-        - "*.go"
+        - packages_config.yaml
         - go.mod
         - go.sum
+        - package_manager.go
+
+stages:
+  - build
+  - deploy
 
 cache:
   key: "repo-cache-${CI_COMMIT_REF_SLUG}"
   paths:
-    - "${REPO_DIR}/x86_64/"
+    - "x86_64/"
+    - "testing/x86_64/"
+    - "api/"
   policy: pull-push
+
+build-package-manager:
+  stage: build
+  script:
+    - echo "Building package manager..."
+    - go version
+    - go build -o pkg-mgr
 
 pages:
   stage: deploy
@@ -48,8 +60,6 @@ pages:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 
   before_script:
-    - pacman -Syu --noconfirm
-    - pacman -S --noconfirm curl jq base-devel git go
     - git config --global user.name "GitLab CI/Package Manager"
     - git config --global user.email "CI@prismlinux.org"
     - git config --global init.defaultBranch main
@@ -62,62 +72,48 @@ pages:
         echo "ERROR: GITLAB_API_TOKEN not found! Please add it to CI/CD variables."
         exit 1
       fi
-    - go version
 
   script: |
     set -eo pipefail
 
     echo "Building package manager..."
-    go build -o package-manager .
+    go build -o pkg-mgr
 
-    echo "=== PRE-EXECUTION STATE ==="
-    echo "Current directory contents:"
-    ls -la
-    echo "Public directory (if exists):"
-    ls -la public/ || echo "Public directory doesn't exist yet"
-    echo "=============================="
-
-    echo "Running package manager with commit enabled..."
+    echo "Running package manager..."
     if [ -n "$GITLAB_API_TOKEN" ]; then
-      echo "Using Personal Access Token for GitLab operations..."
-      ./package-manager --commit --verbose --gitlab-token="$GITLAB_API_TOKEN"
+      ./pkg-mgr --gitlab-token="$GITLAB_API_TOKEN" --verbose
     else
       echo "ERROR: No GitLab token available!"
       exit 1
     fi
 
-    echo "=== POST-EXECUTION STATE ==="
-    echo "Git status:"
-    git status || echo "Not in git repository"
-    echo "Git log (last 3 commits on packages branch):"
-    git log --oneline -3 packages || echo "No commits found on packages branch"
-    echo "Public directory check:"
-    if [ -d "public" ]; then
-      echo "Public directory exists:"
-      find public -type f | head -10 || echo "No files in public"
-      echo "Total files in public: $(find public -type f | wc -l)"
+    echo "Committing changes to repository..."
+    git add x86_64/ testing/ api/
+    if ! git diff --cached --quiet; then
+      git commit -m "Automated package repository update [ci skip]"
+      git push origin $CI_COMMIT_BRANCH
     else
-      echo "❌ Public directory missing!"
-      exit 1
+      echo "No changes to commit"
     fi
-    echo "=============================="
 
-    echo "Package management completed successfully."
+    echo "Creating pages directory structure..."
+    mkdir -p public
+    cp -r x86_64 public/
+    cp -r testing public/ || echo "No testing repository to copy"
+    cp -r api public/
 
   artifacts:
     paths:
       - public
-    expire_in: 7 days
+    expire_in: 1 hour
 
-cleanup:
+clean-stable:
   stage: deploy
   when: manual
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 
   before_script:
-    - pacman -Syu --noconfirm
-    - pacman -S --noconfirm curl jq base-devel git go
     - git config --global user.name "GitLab CI/Cleanup"
     - git config --global user.email "ci-cleanup@prismlinux.org"
     - |
@@ -127,17 +123,62 @@ cleanup:
         echo "ERROR: GITLAB_API_TOKEN not found!"
         exit 1
       fi
-    - go version
 
   script:
-    - echo "Building package manager..."
-    - go build -o package-manager .
-    - echo "⚠️  CLEANUP MODE - This will remove all packages!"
-    - echo "Running cleanup..."
-    - ./package-manager --clean --commit --verbose --gitlab-token="$GITLAB_API_TOKEN"
-    - echo "Cleanup completed!"
+    - echo "⚠️  CLEANUP MODE - This will remove all STABLE packages!"
+    - echo "Running cleanup for stable repository..."
+    - go build -o pkg-mgr
+    - ./pkg-mgr clean --verbose --gitlab-token="$GITLAB_API_TOKEN"
+
+    - echo "Committing changes to repository..."
+    - git add x86_64/ api/
+    - |
+      git commit -m "Cleanup: removed all stable packages [ci skip]"
+    - git push origin $CI_COMMIT_BRANCH
+    - echo "Creating pages directory structure..."
+    - mkdir -p public
+    - cp -r x86_64 public/
+    - cp -r api public/
 
   artifacts:
     paths:
       - public
-    expire_in: 1 day
+    expire_in: 1 hour
+
+clean-testing:
+  stage: deploy
+  when: manual
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+  before_script:
+    - git config --global user.name "GitLab CI/Cleanup"
+    - git config --global user.email "ci-cleanup@prismlinux.org"
+    - |
+      if [ -n "$GITLAB_API_TOKEN" ]; then
+        git remote set-url origin "https://oauth2:${GITLAB_API_TOKEN}@${CI_SERVER_HOST#https://}/${CI_PROJECT_PATH}.git"
+      else
+        echo "ERROR: GITLAB_API_TOKEN not found!"
+        exit 1
+      fi
+
+  script:
+    - echo "⚠️  CLEANUP MODE - This will remove all TESTING packages!"
+    - echo "Running cleanup for testing repository..."
+    - go build -o pkg-mgr
+    - ./pkg-mgr clean --testing --verbose --gitlab-token="$GITLAB_API_TOKEN"
+
+    - echo "Committing changes to repository..."
+    - git add testing/ api/
+    - |
+      git commit -m "Cleanup: removed all testing packages [ci skip]"
+    - git push origin $CI_COMMIT_BRANCH
+    - echo "Creating pages directory structure..."
+    - mkdir -p public
+    - cp -r testing public/
+    - cp -r api public/
+
+  artifacts:
+    paths:
+      - public
+    expire_in: 1 hour

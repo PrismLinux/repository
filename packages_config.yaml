@@ -1,0 +1,103 @@
+gitlab_projects:
+  - id: 72073467
+    name: "Gaming Meta"
+    repository: "stable"
+    enabled: true
+  - id: 72958263
+    name: "RateMirrors"
+    repository: "stable"
+    enabled: true
+  - id: 74020675
+    name: "Graphics"
+    repository: "stable"
+    enabled: true
+
+  # Installer
+  - id: 71409077
+    name: "Crystallize CLI"
+    repository: "stable"
+    enabled: true
+  - id: 71565033
+    name: "Crystallize GUI"
+    repository: "stable"
+    enabled: true
+
+  # Branding
+  - id: 71182518
+    name: "About Prism Linux"
+    repository: "stable"
+    enabled: true
+  - id: 70964684
+    name: "PrismLinux Fish Theme"
+    repository: "stable"
+    enabled: true
+  - id: 71465108
+    name: "Prism Package manager"
+    repository: "stable"
+    enabled: true
+
+  # Grub
+  - id: 71590048
+    name: "Grub"
+    repository: "stable"
+    enabled: true
+  - id: 71590188
+    name: "Grub Theme"
+    repository: "stable"
+    enabled: true
+
+  # Desktop Settings
+  - id: 72940371
+    name: "Gnome Settings"
+    repository: "stable"
+    enabled: true
+  - id: 72941090
+    name: "Plasma Settings"
+    repository: "stable"
+    enabled: true
+  - id: 74425619
+    name: "Cosmic Settings"
+    repository: "stable"
+    enabled: true
+  - id: 74425817
+    name: "Cinnamon Settings"
+    repository: "stable"
+    enabled: true
+  - id: 72942471
+    name: "PrismLinux Settings"
+    repository: "stable"
+    enabled: true
+
+  # Core
+  - id: 71571505
+    name: "Prism Mirrorlist"
+    repository: "stable"
+    enabled: true
+  - id: 71715668
+    name: "PrismLinux Hooks"
+    repository: "stable"
+    enabled: true
+
+  # CrystalNetwork Studio
+  - id: 74599632
+    name: "PKGBUILD Manager"
+    repository: "stable"
+    enabled: true
+  - id: 74375145
+    name: "PKGBUILD BUILDER"
+    repository: "stable"
+    enabled: true
+
+remote_urls:
+  # Kernel
+  - url: "https://github.com/Frogging-Family/linux-tkg/releases/download/v6.16.8/linux616-tkg-bore-llvm-6.16.8-273-x86_64.pkg.tar.zst"
+    repository: "stable"
+    enabled: true
+  - url: "https://github.com/Frogging-Family/linux-tkg/releases/download/v6.16.8/linux616-tkg-bore-llvm-headers-6.16.8-273-x86_64.pkg.tar.zst"
+    repository: "stable"
+    enabled: true
+
+  #
+  # - url: ""
+  #   repository: "testing"
+  #   enabled: true
