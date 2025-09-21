@@ -83,7 +83,7 @@ pages:
     # Handle detached HEAD state by creating or switching to the default branch
     echo "Ensuring we're on the $CI_DEFAULT_BRANCH branch..."
     if [ "$(git rev-parse --abbrev-ref HEAD)" = "HEAD" ]; then
-      echo "Detected detached HEAD state, creating branch $CI_DEFAULT_BRANCH"
+      echo "Detached HEAD state detected, creating branch $CI_DEFAULT_BRANCH"
       git checkout -b $CI_DEFAULT_BRANCH
     elif [ "$(git rev-parse --abbrev-ref HEAD)" != "$CI_DEFAULT_BRANCH" ]; then
       echo "Switching to $CI_DEFAULT_BRANCH branch"
@@ -124,6 +124,8 @@ pages:
     fi
 
     echo "Creating pages directory structure..."
+    # Clean public directory first to avoid permission issues
+    rm -rf public
     mkdir -p public
     if [ -d "x86_64" ]; then
       cp -r x86_64 public/
@@ -170,7 +172,7 @@ clean-stable:
     - echo "Ensuring we're on the $CI_DEFAULT_BRANCH branch..."
     - |
       if [ "$(git rev-parse --abbrev-ref HEAD)" = "HEAD" ]; then
-        echo "Detected detached HEAD state, creating branch $CI_DEFAULT_BRANCH";
+        echo "Detached HEAD state detected, creating branch $CI_DEFAULT_BRANCH";
         git checkout -b $CI_DEFAULT_BRANCH;
       elif [ "$(git rev-parse --abbrev-ref HEAD)" != "$CI_DEFAULT_BRANCH" ]; then
         echo "Switching to $CI_DEFAULT_BRANCH branch";
@@ -192,6 +194,7 @@ clean-stable:
         git push origin $CI_DEFAULT_BRANCH;
       fi
     - echo "Creating pages directory structure..."
+    - rm -rf public
     - mkdir -p public
     - if [ -d "x86_64" ]; then
       cp -r x86_64 public/;
@@ -233,7 +236,7 @@ clean-testing:
     - echo "Ensuring we're on the $CI_DEFAULT_BRANCH branch..."
     - |
       if [ "$(git rev-parse --abbrev-ref HEAD)" = "HEAD" ]; then
-        echo "Detected detached HEAD state, creating branch $CI_DEFAULT_BRANCH";
+        echo "Detached HEAD state detected, creating branch $CI_DEFAULT_BRANCH";
         git checkout -b $CI_DEFAULT_BRANCH;
       elif [ "$(git rev-parse --abbrev-ref HEAD)" != "$CI_DEFAULT_BRANCH" ]; then
         echo "Switching to $CI_DEFAULT_BRANCH branch";
@@ -255,6 +258,7 @@ clean-testing:
         git push origin $CI_DEFAULT_BRANCH;
       fi
     - echo "Creating pages directory structure..."
+    - rm -rf public
     - mkdir -p public
     - if [ -d "testing" ]; then
       cp -r testing public/;
