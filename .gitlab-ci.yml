@@ -49,6 +49,8 @@ cache:
 
 build-package-manager:
   stage: build
+  before_script:
+    - pacman -Sy --noconfirm go git
   script:
     - echo "Building package manager..."
     - go version
@@ -60,6 +62,7 @@ pages:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 
   before_script:
+    - pacman -Sy --noconfirm go git
     - git config --global user.name "GitLab CI/Package Manager"
     - git config --global user.email "CI@prismlinux.org"
     - git config --global init.defaultBranch main
@@ -114,6 +117,7 @@ clean-stable:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 
   before_script:
+    - pacman -Sy --noconfirm go git
     - git config --global user.name "GitLab CI/Cleanup"
     - git config --global user.email "ci-cleanup@prismlinux.org"
     - |
@@ -152,6 +156,7 @@ clean-testing:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 
   before_script:
+    - pacman -Sy --noconfirm go git
     - git config --global user.name "GitLab CI/Cleanup"
     - git config --global user.email "ci-cleanup@prismlinux.org"
     - |
