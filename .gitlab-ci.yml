@@ -92,7 +92,20 @@ pages:
     fi
 
     echo "Committing changes to repository..."
-    git add x86_64/ testing/ api/
+
+    # Add only directories that exist
+    if [ -d "x86_64" ]; then
+      git add x86_64/
+    fi
+
+    if [ -d "testing" ]; then
+      git add testing/
+    fi
+
+    if [ -d "api" ]; then
+      git add api/
+    fi
+
     if ! git diff --cached --quiet; then
       git commit -m "Automated package repository update [ci skip]"
       git push origin $CI_COMMIT_BRANCH
@@ -102,9 +115,17 @@ pages:
 
     echo "Creating pages directory structure..."
     mkdir -p public
-    cp -r x86_64 public/
-    cp -r testing public/ || echo "No testing repository to copy"
-    cp -r api public/
+    if [ -d "x86_64" ]; then
+      cp -r x86_64 public/
+    fi
+    if [ -d "testing" ]; then
+      cp -r testing public/
+    else
+      echo "No testing repository to copy"
+    fi
+    if [ -d "api" ]; then
+      cp -r api public/
+    fi
 
   artifacts:
     paths:
@@ -137,14 +158,27 @@ clean-stable:
     - ./pkg-mgr clean --verbose --gitlab-token="$GITLAB_API_TOKEN"
 
     - echo "Committing changes to repository..."
-    - git add x86_64/ api/
+    - if [ -d "x86_64" ]; then
+      git add x86_64/;
+      fi
+    - if [ -d "api" ]; then
+      git add api/;
+      fi
     - |
-      git commit -m "Cleanup: removed all stable packages [ci skip]"
-    - git push origin $CI_COMMIT_BRANCH
+      if git diff --cached --quiet; then
+        echo "No changes to commit";
+      else
+        git commit -m "Cleanup: removed all stable packages [ci skip]";
+        git push origin $CI_COMMIT_BRANCH;
+      fi
     - echo "Creating pages directory structure..."
     - mkdir -p public
-    - cp -r x86_64 public/
-    - cp -r api public/
+    - if [ -d "x86_64" ]; then
+      cp -r x86_64 public/;
+      fi
+    - if [ -d "api" ]; then
+      cp -r api public/;
+      fi
 
   artifacts:
     paths:
@@ -177,14 +211,27 @@ clean-testing:
     - ./pkg-mgr clean --testing --verbose --gitlab-token="$GITLAB_API_TOKEN"
 
     - echo "Committing changes to repository..."
-    - git add testing/ api/
+    - if [ -d "testing" ]; then
+      git add testing/;
+      fi
+    - if [ -d "api" ]; then
+      git add api/;
+      fi
     - |
-      git commit -m "Cleanup: removed all testing packages [ci skip]"
-    - git push origin $CI_COMMIT_BRANCH
+      if git diff --cached --quiet; then
+        echo "No changes to commit";
+      else
+        git commit -m "Cleanup: removed all testing packages [ci skip]";
+        git push origin $CI_COMMIT_BRANCH;
+      fi
     - echo "Creating pages directory structure..."
     - mkdir -p public
-    - cp -r testing public/
-    - cp -r api public/
+    - if [ -d "testing" ]; then
+      cp -r testing public/;
+      fi
+    - if [ -d "api" ]; then
+      cp -r api public/;
+      fi
 
   artifacts:
     paths:
