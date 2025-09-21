@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -124,14 +125,14 @@ func NewConfig(cmd *cobra.Command) (*Config, error) {
 
 	architecture := getStringFlag(cmd, "arch", "x86_64")
 
-	// Append "-testing" to repo name in testing mode
+	// Handle repository naming for testing mode
 	if cfg.TestingMode {
 		if !strings.HasSuffix(cfg.RepoName, "-testing") {
 			cfg.RepoName += "-testing"
 		}
 		cfg.RepoArchDir = getStringFlag(cmd, "repo-arch-dir", filepath.Join("testing", architecture))
 	} else {
-		// Ensure we don't have "-testing" in stable mode
+		// Remove testing suffix if present in stable mode
 		cfg.RepoName = strings.TrimSuffix(cfg.RepoName, "-testing")
 		cfg.RepoArchDir = getStringFlag(cmd, "repo-arch-dir", architecture)
 	}
@@ -376,6 +377,21 @@ func (pm *PackageManager) syncPackages(packagesConfig *PackagesConfig) error {
 	return nil
 }
 
+func containsRepository(repoList, target string) bool {
+	for repo := range strings.SplitSeq(repoList, ";") {
+		if strings.TrimSpace(repo) == target {
+			return true
+		}
+	}
+	return false
+}
+
+func sortReleasesByDate(releases []*gitlab.Release) {
+	sort.Slice(releases, func(i, j int) bool {
+		return releases[i].CreatedAt.After(*releases[j].CreatedAt)
+	})
+}
+
 func (pm *PackageManager) fetchGitLabPackages(projects []GitLabProject, targetRepo string) ([]RemotePackage, error) {
 	var packages []RemotePackage
 
@@ -384,49 +400,70 @@ func (pm *PackageManager) fetchGitLabPackages(projects []GitLabProject, targetRe
 		return packages, nil
 	}
 
-	enabledProjects := make([]GitLabProject, 0)
 	for _, project := range projects {
-		if project.Enabled {
-			enabledProjects = append(enabledProjects, project)
-		}
-	}
-
-	if len(enabledProjects) == 0 {
-		pm.config.infoLog("No enabled GitLab projects found")
-		return packages, nil
-	}
-
-	// Process each project to determine which packages belong to which repository
-	for _, project := range enabledProjects {
-		pm.config.verboseLog("Fetching releases for project: %s (%s)", project.Name, project.ID)
-
-		listOptions := &gitlab.ListReleasesOptions{
-			ListOptions: gitlab.ListOptions{PerPage: 10},
-		}
-
-		releases, _, err := pm.gitlabClient.Releases.ListReleases(project.ID, listOptions)
-		if err != nil {
-			fmt.Printf("[WARNING] Failed to fetch releases for project %s (%s): %v. Skipping.\n", project.Name, project.ID, err)
+		if !project.Enabled || !containsRepository(project.Repository, targetRepo) {
 			continue
 		}
-		if len(releases) == 0 {
+
+		pm.config.verboseLog("Fetching releases for project: %s (%s)", project.Name, project.ID)
+
+		// Get ALL releases (we need history for version handling)
+		var allReleases []*gitlab.Release
+		page := 1
+		for {
+			listOptions := &gitlab.ListReleasesOptions{
+				ListOptions: gitlab.ListOptions{Page: page, PerPage: 100},
+			}
+			releases, _, err := pm.gitlabClient.Releases.ListReleases(project.ID, listOptions)
+			if err != nil || len(releases) == 0 {
+				break
+			}
+			allReleases = append(allReleases, releases...)
+			page++
+		}
+
+		if len(allReleases) == 0 {
 			pm.config.verboseLog("No releases found for project: %s", project.Name)
 			continue
 		}
 
-		// Check if this project should be included in the target repository
-		if project.Repository == targetRepo {
-			pm.config.verboseLog("Found release: %s for project %s", releases[0].Name, project.Name)
+		// Sort by creation date (newest first)
+		sortReleasesByDate(allReleases)
 
-			for _, asset := range releases[0].Assets.Links {
-				if strings.HasSuffix(asset.Name, ".pkg.tar.zst") && strings.HasPrefix(asset.URL, "https") {
-					packages = append(packages, RemotePackage{
-						Filename:   asset.Name,
-						URL:        asset.URL,
-						Repository: project.Repository,
-					})
-					pm.config.verboseLog("Added package: %s from project %s", asset.Name, project.Name)
-				}
+		// Check if project is in BOTH repositories
+		isDualRepo := containsRepository(project.Repository, "stable") &&
+			containsRepository(project.Repository, "testing")
+
+		var releaseToUse *gitlab.Release
+		if isDualRepo {
+			if targetRepo == "testing" {
+				// Testing gets latest version
+				releaseToUse = allReleases[0]
+				pm.config.verboseLog("Using LATEST version for testing: %s", releaseToUse.Name)
+			} else if targetRepo == "stable" && len(allReleases) > 1 {
+				// Stable gets PREVIOUS version (if available)
+				releaseToUse = allReleases[1]
+				pm.config.verboseLog("Using PREVIOUS version for stable: %s", releaseToUse.Name)
+			} else {
+				// Not enough versions for stable in dual-repo mode
+				pm.config.verboseLog("Skipping project %s for stable (needs at least 2 releases)", project.Name)
+				continue
+			}
+		} else {
+			// Single-repo project: always use latest
+			releaseToUse = allReleases[0]
+			pm.config.verboseLog("Using LATEST version (single repo): %s", releaseToUse.Name)
+		}
+
+		// Process assets from selected release
+		for _, asset := range releaseToUse.Assets.Links {
+			if strings.HasSuffix(asset.Name, ".pkg.tar.zst") && strings.HasPrefix(asset.URL, "https") {
+				packages = append(packages, RemotePackage{
+					Filename:   asset.Name,
+					URL:        asset.URL,
+					Repository: targetRepo,
+				})
+				pm.config.verboseLog("Added package: %s from %s", asset.Name, releaseToUse.Name)
 			}
 		}
 	}
