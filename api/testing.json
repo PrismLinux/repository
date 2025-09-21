@@ -1,0 +1,26 @@
+[
+  {
+    "name": "crystallize-cli",
+    "version": "0.3.0-1",
+    "description": "CLI version of Crystallize Installer",
+    "architecture": "x86_64",
+    "filename": "crystallize-cli-0.3.0-1-x86_64.pkg.tar.zst",
+    "size": "1020837",
+    "modified": "2025-09-21 13:50:57",
+    "depends": "arch-install-scripts  util-linux",
+    "groups": "None",
+    "repository": "testing"
+  },
+  {
+    "name": "crystallize-gui",
+    "version": "0.2.9-1",
+    "description": "GUI version of Crystallize Installer",
+    "architecture": "x86_64",
+    "filename": "crystallize-gui-0.2.9-1-x86_64.pkg.tar.zst",
+    "size": "97147",
+    "modified": "2025-09-21 13:50:57",
+    "depends": "python  python-gobject  python-psutil  gtk4  libadwaita  python-cairo  openssl  python-pytz  gnome-disk-utility  glibc-locales  vte4  meson  ninja  libadwaita  desktop-file-utils  appstream-glib  python-urllib3  python-tzlocal  python-requests  gtksourceview5  python-regex",
+    "groups": "None",
+    "repository": "testing"
+  }
+]
