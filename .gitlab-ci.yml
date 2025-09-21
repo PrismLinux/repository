@@ -63,6 +63,7 @@ pages:
 
   before_script:
     - sudo pacman -Sy --noconfirm go git
+    - mkdir -p x86_64 api testing/x86_64
     - git config --global --add safe.directory '*'
     - git config --global user.name "GitLab CI/Package Manager"
     - git config --global user.email "CI@prismlinux.org"
