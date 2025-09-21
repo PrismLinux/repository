@@ -63,6 +63,7 @@ pages:
 
   before_script:
     - sudo pacman -Sy --noconfirm go git
+    - git config --global --add safe.directory '*'
     - git config --global user.name "GitLab CI/Package Manager"
     - git config --global user.email "CI@prismlinux.org"
     - git config --global init.defaultBranch main
@@ -118,6 +119,7 @@ clean-stable:
 
   before_script:
     - sudo pacman -Sy --noconfirm go git
+    - git config --global --add safe.directory '*'
     - git config --global user.name "GitLab CI/Cleanup"
     - git config --global user.email "ci-cleanup@prismlinux.org"
     - |
@@ -157,6 +159,7 @@ clean-testing:
 
   before_script:
     - sudo pacman -Sy --noconfirm go git
+    - git config --global --add safe.directory '*'
     - git config --global user.name "GitLab CI/Cleanup"
     - git config --global user.email "ci-cleanup@prismlinux.org"
     - |
