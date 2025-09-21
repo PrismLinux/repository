@@ -124,9 +124,15 @@ func NewConfig(cmd *cobra.Command) (*Config, error) {
 
 	architecture := getStringFlag(cmd, "arch", "x86_64")
 
+	// Append "-testing" to repo name in testing mode
 	if cfg.TestingMode {
+		if !strings.HasSuffix(cfg.RepoName, "-testing") {
+			cfg.RepoName += "-testing"
+		}
 		cfg.RepoArchDir = getStringFlag(cmd, "repo-arch-dir", filepath.Join("testing", architecture))
 	} else {
+		// Ensure we don't have "-testing" in stable mode
+		cfg.RepoName = strings.TrimSuffix(cfg.RepoName, "-testing")
 		cfg.RepoArchDir = getStringFlag(cmd, "repo-arch-dir", architecture)
 	}
 
