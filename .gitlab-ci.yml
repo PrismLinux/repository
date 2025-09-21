@@ -54,7 +54,7 @@ build-package-manager:
   script:
     - echo "Building package manager..."
     - go version
-    - go build -o pkg-mgr
+    - go build -buildvcs=false -o pkg-mgr
 
 pages:
   stage: deploy
@@ -80,7 +80,7 @@ pages:
     set -eo pipefail
 
     echo "Building package manager..."
-    go build -o pkg-mgr
+    go build -buildvcs=false -o pkg-mgr
 
     echo "Running package manager..."
     if [ -n "$GITLAB_API_TOKEN" ]; then
@@ -131,7 +131,7 @@ clean-stable:
   script:
     - echo "⚠️  CLEANUP MODE - This will remove all STABLE packages!"
     - echo "Running cleanup for stable repository..."
-    - go build -o pkg-mgr
+    - go build -buildvcs=false -o pkg-mgr
     - ./pkg-mgr clean --verbose --gitlab-token="$GITLAB_API_TOKEN"
 
     - echo "Committing changes to repository..."
@@ -170,7 +170,7 @@ clean-testing:
   script:
     - echo "⚠️  CLEANUP MODE - This will remove all TESTING packages!"
     - echo "Running cleanup for testing repository..."
-    - go build -o pkg-mgr
+    - go build -buildvcs=false -o pkg-mgr
     - ./pkg-mgr clean --testing --verbose --gitlab-token="$GITLAB_API_TOKEN"
 
     - echo "Committing changes to repository..."
