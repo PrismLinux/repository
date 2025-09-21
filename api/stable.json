@@ -12,30 +12,6 @@
     "repository": "stable"
   },
   {
-    "name": "crystallize-cli",
-    "version": "0.2.9-1",
-    "description": "CLI version of Crystallize Installer",
-    "architecture": "x86_64",
-    "filename": "crystallize-cli-0.2.9-1-x86_64.pkg.tar.zst",
-    "size": "618002",
-    "modified": "2025-09-21 10:09:46",
-    "depends": "arch-install-scripts  util-linux",
-    "groups": "None",
-    "repository": "stable"
-  },
-  {
-    "name": "crystallize-gui",
-    "version": "0.2.8-1",
-    "description": "GUI version of Crystallize Installer",
-    "architecture": "x86_64",
-    "filename": "crystallize-gui-0.2.8-1-x86_64.pkg.tar.zst",
-    "size": "96698",
-    "modified": "2025-09-21 10:09:46",
-    "depends": "python  python-gobject  python-psutil  gtk4  libadwaita  python-cairo  openssl  python-pytz  gnome-disk-utility  glibc-locales  vte4  meson  ninja  libadwaita  desktop-file-utils  appstream-glib  python-urllib3  python-tzlocal  python-requests  gtksourceview5  python-regex",
-    "groups": "None",
-    "repository": "stable"
-  },
-  {
     "name": "grub",
     "version": "2.122b-1",
     "description": "GNU GRand Unified Bootloader (2)",
@@ -108,6 +84,18 @@
     "repository": "stable"
   },
   {
+    "name": "prismlinux-cinnamon-settings",
+    "version": "1.0.0-1",
+    "description": "PrismLinux Cinnamon Desktop settings",
+    "architecture": "any",
+    "filename": "prismlinux-cinnamon-settings-1.0.0-1-any.pkg.tar.zst",
+    "size": "7167",
+    "modified": "2025-09-21 13:20:44",
+    "depends": "cinnamon  mint-themes  mint-x-icons  mint-y-icons  metacity  gnome-shell",
+    "groups": "None",
+    "repository": "stable"
+  },
+  {
     "name": "prismlinux-cosmic-settings",
     "version": "1.0.0-1",
     "description": "PrismLinux Cosmic Desktop settings",
@@ -145,13 +133,13 @@
   },
   {
     "name": "prismlinux-graphics",
-    "version": "1.1-1",
+    "version": "1.0-1",
     "description": "PrismLinux Graphics",
     "architecture": "any",
-    "filename": "prismlinux-graphics-1.1-1-any.pkg.tar.zst",
-    "size": "3348",
-    "modified": "2025-09-21 10:09:47",
-    "depends": "mesa-tkg-git  xf86-video-amdgpu  xf86-video-intel  xf86-video-nouveau  xf86-video-vesa  vulkan-icd-loader  vulkan-tools  lib32-mesa-tkg-git  lib32-libdrm  lib32-libxxf86vm  lib32-libxdamage  lib32-libxshmfence  lib32-lm_sensors  lib32-libelf  lib32-wayland  lib32-libglvnd  lib32-libx11  lib32-llvm-libs  lib32-spirv-tools",
+    "filename": "prismlinux-graphics-1.0-1-any.pkg.tar.zst",
+    "size": "2905",
+    "modified": "2025-09-21 13:20:45",
+    "depends": "mesa  xf86-video-amdgpu  xf86-video-intel  xf86-video-nouveau  xf86-video-vesa  vulkan-intel  vulkan-radeon  vulkan-icd-loader",
     "groups": "None",
     "repository": "stable"
   },
