@@ -12,11 +12,11 @@ gitlab_projects:
   # Installer
   - id: 71409077
     name: "Crystallize CLI"
-    repository: "stable"
+    repository: "testing"
     enabled: true
   - id: 71565033
     name: "Crystallize GUI"
-    repository: "stable"
+    repository: "testing"
     enabled: true
 
   # Branding
