@@ -66,7 +66,7 @@ pages:
     - git config --global --add safe.directory '*'
     - git config --global user.name "GitLab CI/Package Manager"
     - git config --global user.email "CI@prismlinux.org"
-    - git config --global init.defaultBranch main
+    - git config --global init.defaultBranch $CI_DEFAULT_BRANCH
     - |
       if [ -n "$GITLAB_API_TOKEN" ]; then
         echo "Configuring git with Personal Access Token..."
@@ -108,7 +108,7 @@ pages:
 
     if ! git diff --cached --quiet; then
       git commit -m "Automated package repository update [ci skip]"
-      git push origin $CI_COMMIT_BRANCH
+      git push origin $CI_DEFAULT_BRANCH
     else
       echo "No changes to commit"
     fi
@@ -169,7 +169,7 @@ clean-stable:
         echo "No changes to commit";
       else
         git commit -m "Cleanup: removed all stable packages [ci skip]";
-        git push origin $CI_COMMIT_BRANCH;
+        git push origin $CI_DEFAULT_BRANCH;
       fi
     - echo "Creating pages directory structure..."
     - mkdir -p public
@@ -222,7 +222,7 @@ clean-testing:
         echo "No changes to commit";
       else
         git commit -m "Cleanup: removed all testing packages [ci skip]";
-        git push origin $CI_COMMIT_BRANCH;
+        git push origin $CI_DEFAULT_BRANCH;
       fi
     - echo "Creating pages directory structure..."
     - mkdir -p public
