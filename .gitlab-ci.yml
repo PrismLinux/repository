@@ -21,7 +21,7 @@ variables:
   REPO_NAME: "prismlinux"
   GIT_STRATEGY: clone
   GIT_DEPTH: 0
-  GO_VERSION: "1.22"
+  GO_VERSION: "1.25"
 
 workflow:
   rules:
