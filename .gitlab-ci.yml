@@ -80,6 +80,16 @@ pages:
   script: |
     set -eo pipefail
 
+    # Handle detached HEAD state by creating or switching to the default branch
+    echo "Ensuring we're on the $CI_DEFAULT_BRANCH branch..."
+    if [ "$(git rev-parse --abbrev-ref HEAD)" = "HEAD" ]; then
+      echo "Detected detached HEAD state, creating branch $CI_DEFAULT_BRANCH"
+      git checkout -b $CI_DEFAULT_BRANCH
+    elif [ "$(git rev-parse --abbrev-ref HEAD)" != "$CI_DEFAULT_BRANCH" ]; then
+      echo "Switching to $CI_DEFAULT_BRANCH branch"
+      git checkout $CI_DEFAULT_BRANCH
+    fi
+
     echo "Building package manager..."
     go build -buildvcs=false -o pkg-mgr
 
@@ -157,6 +167,16 @@ clean-stable:
     - go build -buildvcs=false -o pkg-mgr
     - ./pkg-mgr clean --verbose --gitlab-token="$GITLAB_API_TOKEN"
 
+    - echo "Ensuring we're on the $CI_DEFAULT_BRANCH branch..."
+    - |
+      if [ "$(git rev-parse --abbrev-ref HEAD)" = "HEAD" ]; then
+        echo "Detected detached HEAD state, creating branch $CI_DEFAULT_BRANCH";
+        git checkout -b $CI_DEFAULT_BRANCH;
+      elif [ "$(git rev-parse --abbrev-ref HEAD)" != "$CI_DEFAULT_BRANCH" ]; then
+        echo "Switching to $CI_DEFAULT_BRANCH branch";
+        git checkout $CI_DEFAULT_BRANCH;
+      fi
+
     - echo "Committing changes to repository..."
     - if [ -d "x86_64" ]; then
       git add x86_64/;
@@ -209,6 +229,16 @@ clean-testing:
     - echo "Running cleanup for testing repository..."
     - go build -buildvcs=false -o pkg-mgr
     - ./pkg-mgr clean --testing --verbose --gitlab-token="$GITLAB_API_TOKEN"
+
+    - echo "Ensuring we're on the $CI_DEFAULT_BRANCH branch..."
+    - |
+      if [ "$(git rev-parse --abbrev-ref HEAD)" = "HEAD" ]; then
+        echo "Detected detached HEAD state, creating branch $CI_DEFAULT_BRANCH";
+        git checkout -b $CI_DEFAULT_BRANCH;
+      elif [ "$(git rev-parse --abbrev-ref HEAD)" != "$CI_DEFAULT_BRANCH" ]; then
+        echo "Switching to $CI_DEFAULT_BRANCH branch";
+        git checkout $CI_DEFAULT_BRANCH;
+      fi
 
     - echo "Committing changes to repository..."
     - if [ -d "testing" ]; then
