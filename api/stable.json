@@ -85,12 +85,12 @@
   },
   {
     "name": "pkgbuild-builder",
-    "version": "0.1.0-2",
+    "version": "0.2.0-1",
     "description": "A reliable tool for building Arch Linux/PrismLinux packages in GitLab CI",
     "architecture": "x86_64",
-    "filename": "pkgbuild-builder-0.1.0-2-x86_64.pkg.tar.zst",
-    "size": "904765",
-    "modified": "2025-09-21 10:09:47",
+    "filename": "pkgbuild-builder-0.2.0-1-x86_64.pkg.tar.zst",
+    "size": "1137531",
+    "modified": "2025-09-21 12:34:29",
     "depends": "base-devel  fakeroot  git  openssl  curl  jq  debugedit  which",
     "groups": "None",
     "repository": "stable"
