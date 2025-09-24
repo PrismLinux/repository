@@ -99,8 +99,3 @@ remote_urls:
   - url: "https://github.com/Frogging-Family/linux-tkg/releases/download/v6.16.8/linux616-tkg-bore-llvm-headers-6.16.8-273-x86_64.pkg.tar.zst"
     repository: "stable"
     enabled: true
-
-  #
-  # - url: ""
-  #   repository: "testing"
-  #   enabled: true
