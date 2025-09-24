@@ -25,12 +25,12 @@
   },
   {
     "name": "crystallize-gui",
-    "version": "0.2.8-1",
+    "version": "0.2.9-1",
     "description": "GUI version of Crystallize Installer",
     "architecture": "x86_64",
-    "filename": "crystallize-gui-0.2.8-1-x86_64.pkg.tar.zst",
-    "size": "96698",
-    "modified": "2025-09-21 14:11:51",
+    "filename": "crystallize-gui-0.2.9-1-x86_64.pkg.tar.zst",
+    "size": "97147",
+    "modified": "2025-09-24 14:01:23",
     "depends": "python  python-gobject  python-psutil  gtk4  libadwaita  python-cairo  openssl  python-pytz  gnome-disk-utility  glibc-locales  vte4  meson  ninja  libadwaita  desktop-file-utils  appstream-glib  python-urllib3  python-tzlocal  python-requests  gtksourceview5  python-regex",
     "groups": "None",
     "repository": "stable"
