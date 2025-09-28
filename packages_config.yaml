@@ -99,3 +99,13 @@ remote_urls:
   - url: "https://github.com/Frogging-Family/linux-tkg/releases/download/v6.16.9/linux616-tkg-bore-llvm-headers-6.16.9-273-x86_64.pkg.tar.zst"
     repository: "stable"
     enabled: true
+  #Hyprland Settings
+  - url: "https://gitlab.com/crystalnetwork-studio/linux/prismlinux/packages/hyprland-settings/-/raw/main/illogical-impulse-bibata-modern-classic-bin-2.0.6-1-any.pkg.tar.zst"
+    repository: "stable"
+    enabled: true
+  - url: "https://gitlab.com/crystalnetwork-studio/linux/prismlinux/packages/hyprland-settings/-/raw/main/illogical-impulse-microtex-git-r494.0e3707f-2-x86_64.pkg.tar.zst"
+    repository: "stable"
+    enabled: true
+  - url: "https://gitlab.com/crystalnetwork-studio/linux/prismlinux/packages/hyprland-settings/-/raw/main/illogical-impulse-oneui4-icons-git-r71.693095d-1-x86_64.pkg.tar.zst"
+    repository: "stable"
+    enabled: true
