@@ -216,6 +216,18 @@
     "repository": "stable"
   },
   {
+    "name": "prismlinux-hyprland-quickshellbase",
+    "version": "2025.05.13.r1941.g8713e9442-1",
+    "description": "Rice built for usability",
+    "architecture": "any",
+    "filename": "prismlinux-hyprland-quickshellbase-2025.05.13.r1941.g8713e9442-1-any.pkg.tar.zst",
+    "size": "569982",
+    "modified": "2025-09-28 18:13:26",
+    "depends": "cava  pavucontrol-qt  wireplumber  libdbusmenu-gtk3  playerctl  geoclue  brightnessctl  ddcutil  axel  bc  coreutils  cliphist  cmake  curl  rsync  wget  ripgrep  jq  meson  xdg-user-dirs  illogical-impulse-bibata-modern-classic-bin  adw-gtk-theme-git  breeze  breeze-plus  darkly-bin  eza  fish  fontconfig  kde-material-you-colors  kitty  matugen-bin  otf-space-grotesk  starship  ttf-gabarito-git  ttf-jetbrains-mono-nerd  ttf-material-symbols-variable-git  ttf-readex-pro  ttf-rubik-vf  ttf-twemoji  hypridle  hyprcursor  hyprland  hyprland-qtutils  hyprland-qt-support  hyprlang  hyprlock  hyprpicker  hyprsunset  hyprutils  hyprwayland-scanner  xdg-desktop-portal-hyprland  wl-clipboard  bluedevil  gnome-keyring  networkmanager  plasma-nm  polkit-kde-agent  dolphin  systemsettings  illogical-impulse-microtex-git  illogical-impulse-oneui4-icons-git  xdg-desktop-portal  xdg-desktop-portal-kde  xdg-desktop-portal-gtk  xdg-desktop-portal-hyprland  clang  uv  gtk4  libadwaita  libsoup3  libportal-gtk4  gobject-introspection  sassc  python-opencv  hyprshot  slurp  swappy  tesseract  tesseract-data-eng  wf-recorder  kdialog  qt6-5compat  qt6-avif-image-plugin  qt6-base  qt6-declarative  qt6-imageformats  qt6-multimedia  qt6-positioning  qt6-quicktimeline  qt6-sensors  qt6-svg  qt6-tools  qt6-translations  qt6-virtualkeyboard  qt6-wayland  syntax-highlighting  upower  wtype  ydotool  fuzzel  glib2  hypridle  hyprutils  hyprlock  hyprpicker  nm-connection-editor  quickshell-git  translate-shell  wlogout",
+    "groups": "None",
+    "repository": "stable"
+  },
+  {
     "name": "prismlinux-mirrorlist",
     "version": "2025.8-1",
     "description": "PrismLinux mirrorlist",
