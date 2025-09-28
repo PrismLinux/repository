@@ -60,6 +60,42 @@
     "repository": "stable"
   },
   {
+    "name": "illogical-impulse-bibata-modern-classic-bin",
+    "version": "2.0.6-1",
+    "description": "Material Based Cursor Theme, installed for illogical-impulse dotfiles",
+    "architecture": "any",
+    "filename": "illogical-impulse-bibata-modern-classic-bin-2.0.6-1-any.pkg.tar.zst",
+    "size": "2895121",
+    "modified": "2025-09-28 17:39:43",
+    "depends": "None",
+    "groups": "None",
+    "repository": "stable"
+  },
+  {
+    "name": "illogical-impulse-microtex-git",
+    "version": "r494.0e3707f-2",
+    "description": "MicroTeX for illogical-impulse dotfiles.",
+    "architecture": "x86_64",
+    "filename": "illogical-impulse-microtex-git-r494.0e3707f-2-x86_64.pkg.tar.zst",
+    "size": "1192198",
+    "modified": "2025-09-28 17:39:44",
+    "depends": "tinyxml2  gtkmm3  gtksourceviewmm  cairomm",
+    "groups": "None",
+    "repository": "stable"
+  },
+  {
+    "name": "illogical-impulse-oneui4-icons-git",
+    "version": "r71.693095d-1",
+    "description": "A fork of mjkim0727/OneUI4-Icons for illogical-impulse dotfiles.",
+    "architecture": "x86_64",
+    "filename": "illogical-impulse-oneui4-icons-git-r71.693095d-1-x86_64.pkg.tar.zst",
+    "size": "3859403",
+    "modified": "2025-09-28 17:39:43",
+    "depends": "None",
+    "groups": "None",
+    "repository": "stable"
+  },
+  {
     "name": "linux616-tkg-bore-llvm",
     "version": "6.16.9-273",
     "description": "The Linux-tkg kernel and modules - https://github.com/Frogging-Family/linux-tkg",
@@ -157,13 +193,13 @@
   },
   {
     "name": "prismlinux-graphics",
-    "version": "1.1-1",
+    "version": "1.2-1",
     "description": "PrismLinux Graphics",
     "architecture": "x86_64",
-    "filename": "prismlinux-graphics-1.1-1-x86_64.pkg.tar.zst",
-    "size": "3352",
-    "modified": "2025-09-27 13:40:31",
-    "depends": "mesa-tkg-git  xf86-video-amdgpu  xf86-video-intel  xf86-video-nouveau  xf86-video-vesa  vulkan-icd-loader  vulkan-tools  lib32-mesa-tkg-git  lib32-libdrm  lib32-libxxf86vm  lib32-libxdamage  lib32-libxshmfence  lib32-lm_sensors  lib32-libelf  lib32-wayland  lib32-libglvnd  lib32-libx11  lib32-llvm-libs  lib32-spirv-tools",
+    "filename": "prismlinux-graphics-1.2-1-x86_64.pkg.tar.zst",
+    "size": "3280",
+    "modified": "2025-09-28 17:39:43",
+    "depends": "mesa  vulkan-intel  vulkan-radeon  vulkan-nouveau  xf86-video-amdgpu  xf86-video-intel  xf86-video-nouveau  xf86-video-vesa  vulkan-icd-loader  vulkan-tools",
     "groups": "None",
     "repository": "stable"
   },
