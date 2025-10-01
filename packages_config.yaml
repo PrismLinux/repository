@@ -1,100 +1,102 @@
+# yaml-language-server: $schema=./packages_config.schema.json
+
 gitlab_projects:
   # Core
-  - id: 71571505
+  - id: "71571505"
     name: "Prism Mirrorlist"
     repository: "stable"
     enabled: true
-  - id: 71715668
+  - id: "71715668"
     name: "PrismLinux Hooks"
     repository: "stable"
     enabled: true
 
   # Installer
-  - id: 71409077
+  - id: "71409077"
     name: "Crystallize CLI"
     repository: "testing;stable"
     enabled: true
-  - id: 71565033
+  - id: "71565033"
     name: "Crystallize GUI"
     repository: "testing;stable"
     enabled: true
-  - id: 74640851
+  - id: "74640851"
     name: "PrismLinux ISO"
     repository: "stable"
     enabled: true
 
   # Branding
-  - id: 71182518
+  - id: "71182518"
     name: "About Prism Linux"
     repository: "stable"
     enabled: true
-  - id: 71465108
+  - id: "71465108"
     name: "Prism Package manager"
     repository: "stable"
     enabled: true
-  - id: 72958263
+  - id: "72958263"
     name: "RateMirrors"
     repository: "stable"
     enabled: true
 
   # Themes
-  - id: 70964684
+  - id: "70964684"
     name: "PrismLinux Fish Theme"
     repository: "stable"
     enabled: true
 
   # Grub
-  - id: 71590048
+  - id: "71590048"
     name: "Grub"
     repository: "stable"
     enabled: true
-  - id: 71590188
+  - id: "71590188"
     name: "Grub Theme"
     repository: "stable"
     enabled: true
 
   # Desktop Settings
-  - id: 72940371
+  - id: "72940371"
     name: "Gnome Settings"
     repository: "stable"
     enabled: true
-  - id: 72941090
+  - id: "72941090"
     name: "Plasma Settings"
     repository: "stable"
     enabled: true
-  - id: 74425619
+  - id: "74425619"
     name: "Cosmic Settings"
     repository: "stable"
     enabled: true
-  - id: 74425817
+  - id: "74425817"
     name: "Cinnamon Settings"
     repository: "stable"
     enabled: true
-  - id: 74045367
+  - id: "74045367"
     name: "HyprLand Settings"
     repository: "stable"
     enabled: true
-  - id: 72942471
+  - id: "72942471"
     name: "PrismLinux Settings"
     repository: "stable"
     enabled: true
 
   # Groups
-  - id: 74020675
+  - id: "74020675"
     name: "Graphics"
     repository: "stable"
     enabled: true
-  - id: 72073467
+  - id: "72073467"
     name: "Gaming Meta"
     repository: "stable"
     enabled: true
 
   # CrystalNetwork Studio
-  - id: 74599632
+  - id: "74599632"
     name: "PKGBUILD Manager"
     repository: "stable"
     enabled: true
-  - id: 74375145
+  - id: "74375145"
     name: "PKGBUILD BUILDER"
     repository: "stable"
     enabled: true
