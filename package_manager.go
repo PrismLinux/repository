@@ -17,6 +17,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// Models
 type PackageInfo struct {
 	Name         string `json:"name"`
 	Version      string `json:"version"`
@@ -54,6 +55,7 @@ type PackagesConfig struct {
 	RemoteURLs     []RemoteURL     `yaml:"remote_urls"`
 }
 
+// Config
 type Config struct {
 	RepoName    string
 	RepoArchDir string
@@ -62,6 +64,8 @@ type Config struct {
 	TestingMode bool
 	Debug       bool
 	Verbose     bool
+	dbBaseName  string // Internal: without sufix
+	targetRepo  string // Internal: "stable" or "testing"
 }
 
 func (cfg *Config) debugLog(format string, args ...interface{}) {
@@ -80,6 +84,19 @@ func (cfg *Config) infoLog(format string, args ...interface{}) {
 	fmt.Printf("[INFO] "+format+"\n", args...)
 }
 
+func (cfg *Config) getDBName() string {
+	return cfg.dbBaseName + ".db.tar.gz"
+}
+
+func (cfg *Config) getFilesName() string {
+	return cfg.dbBaseName + ".files.tar.gz"
+}
+
+func (cfg *Config) getTargetRepo() string {
+	return cfg.targetRepo
+}
+
+// Package Manager
 type PackageManager struct {
 	config       *Config
 	gitlabClient *gitlab.Client
@@ -102,138 +119,13 @@ func NewPackageManager(cfg *Config) (*PackageManager, error) {
 	return pm, nil
 }
 
+// File Manager
 type FileManager struct {
 	config *Config
 }
 
 func NewFileManager(cfg *Config) *FileManager {
 	return &FileManager{config: cfg}
-}
-
-func getStringFlag(cmd *cobra.Command, name, defaultValue string) string {
-	if value, _ := cmd.Flags().GetString(name); value != "" {
-		return value
-	}
-	return defaultValue
-}
-
-func NewConfig(cmd *cobra.Command) (*Config, error) {
-	cfg := &Config{}
-
-	cfg.RepoName = getStringFlag(cmd, "repo-name", "prismlinux")
-	cfg.TestingMode, _ = cmd.Flags().GetBool("testing")
-
-	architecture := getStringFlag(cmd, "arch", "x86_64")
-
-	if cfg.TestingMode {
-		if !strings.HasSuffix(cfg.RepoName, "-testing") {
-			cfg.RepoName += "-testing"
-		}
-		cfg.RepoArchDir = getStringFlag(cmd, "repo-arch-dir", filepath.Join("testing", architecture))
-	} else {
-		cfg.RepoName = strings.TrimSuffix(cfg.RepoName, "-testing")
-		cfg.RepoArchDir = getStringFlag(cmd, "repo-arch-dir", architecture)
-	}
-
-	cfg.APIDir = getStringFlag(cmd, "api-dir", "api")
-	cfg.GitLabToken = getStringFlag(cmd, "gitlab-token", "")
-	if cfg.GitLabToken == "" {
-		cfg.GitLabToken = os.Getenv("GITLAB_TOKEN")
-	}
-
-	cfg.Debug, _ = cmd.Flags().GetBool("debug")
-	cfg.Verbose, _ = cmd.Flags().GetBool("verbose")
-
-	return cfg, nil
-}
-
-var RootCmd = &cobra.Command{
-	Use:   "package-manager",
-	Short: "Manages the PrismLinux package repository",
-	Long:  `CLI tool to manage PrismLinux package repository. Syncs packages, updates repo DB, generates metadata for web UI.`,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := NewConfig(cmd)
-		if err != nil {
-			return err
-		}
-		return runPackageManagement(cfg)
-	},
-}
-
-func readPackagesConfig() (*PackagesConfig, error) {
-	configFile := "packages_config.yaml"
-
-	if _, err := os.Stat(configFile); os.IsNotExist(err) {
-		defaultConfig := &PackagesConfig{
-			GitLabProjects: []GitLabProject{
-				{
-					ID:         "12345",
-					Name:       "example-package",
-					Repository: "stable",
-					Enabled:    true,
-				},
-			},
-			RemoteURLs: []RemoteURL{
-				{
-					URL:        "https://example.com/package.pkg.tar.zst  ",
-					Repository: "stable",
-					Enabled:    true,
-				},
-			},
-		}
-
-		data, err := yaml.Marshal(defaultConfig)
-		if err != nil {
-			return nil, fmt.Errorf("failed to marshal default config: %w", err)
-		}
-
-		if err := os.WriteFile(configFile, data, 0644); err != nil {
-			return nil, fmt.Errorf("failed to create default config: %w", err)
-		}
-
-		fmt.Printf("Created default config file: %s\n", configFile)
-		fmt.Println("Please edit the config file and run the command again.")
-		return defaultConfig, nil
-	}
-
-	data, err := os.ReadFile(configFile)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read config file: %w", err)
-	}
-
-	var config PackagesConfig
-	if err := yaml.Unmarshal(data, &config); err != nil {
-		return nil, fmt.Errorf("failed to parse config file: %w", err)
-	}
-
-	return &config, nil
-}
-
-func runPackageManagement(cfg *Config) error {
-	cfg.debugLog("Starting with config: %+v", cfg)
-
-	packagesConfig, err := readPackagesConfig()
-	if err != nil {
-		return fmt.Errorf("failed to read packages configuration: %w", err)
-	}
-
-	pm, err := NewPackageManager(cfg)
-	if err != nil {
-		return err
-	}
-
-	fileMgr := NewFileManager(cfg)
-
-	if err := fileMgr.createDirectories(); err != nil {
-		return err
-	}
-
-	if err := pm.syncPackages(packagesConfig); err != nil {
-		return err
-	}
-
-	fmt.Println("Package management completed successfully.")
-	return nil
 }
 
 func (fm *FileManager) createDirectories() error {
@@ -280,10 +172,10 @@ func (fm *FileManager) removeRepositoryDatabase() error {
 	fmt.Println("Removing repository database files...")
 
 	dbFiles := []string{
-		fm.config.RepoName + ".db",
-		fm.config.RepoName + ".db.tar.gz",
-		fm.config.RepoName + ".files",
-		fm.config.RepoName + ".files.tar.gz",
+		fm.config.dbBaseName + ".db",
+		fm.config.getDBName(),
+		fm.config.dbBaseName + ".files",
+		fm.config.getFilesName(),
 	}
 
 	for _, dbFile := range dbFiles {
@@ -311,12 +203,7 @@ func (fm *FileManager) createEmptyPackagesJSON() error {
 		return fmt.Errorf("failed to marshal empty JSON: %w", err)
 	}
 
-	targetRepo := "stable"
-	if fm.config.TestingMode {
-		targetRepo = "testing"
-	}
-
-	apiFileName := fmt.Sprintf("%s.json", targetRepo)
+	apiFileName := fmt.Sprintf("%s.json", fm.config.getTargetRepo())
 	apiFilePath := filepath.Join(fm.config.APIDir, apiFileName)
 
 	err = os.WriteFile(apiFilePath, jsonData, 0644)
@@ -328,20 +215,60 @@ func (fm *FileManager) createEmptyPackagesJSON() error {
 	return nil
 }
 
-func (pm *PackageManager) syncPackages(packagesConfig *PackagesConfig) error {
-	targetRepo := "stable"
-	if pm.config.TestingMode {
-		targetRepo = "testing"
+// Config initialization
+func getStringFlag(cmd *cobra.Command, name, defaultValue string) string {
+	if value, _ := cmd.Flags().GetString(name); value != "" {
+		return value
+	}
+	return defaultValue
+}
+
+func NewConfig(cmd *cobra.Command) (*Config, error) {
+	cfg := &Config{}
+
+	baseRepoName := getStringFlag(cmd, "repo-name", "prismlinux")
+	cfg.TestingMode, _ = cmd.Flags().GetBool("testing")
+
+	architecture := getStringFlag(cmd, "arch", "x86_64")
+
+	// Detecting targetRepo and name of DB
+	if cfg.TestingMode {
+		cfg.targetRepo = "testing"
+		cfg.dbBaseName = baseRepoName + "-testing"
+		cfg.RepoName = cfg.dbBaseName
+		cfg.RepoArchDir = getStringFlag(cmd, "repo-arch-dir", filepath.Join("testing", architecture))
+	} else {
+		cfg.targetRepo = "stable"
+		cfg.dbBaseName = baseRepoName
+		cfg.RepoName = baseRepoName
+		cfg.RepoArchDir = getStringFlag(cmd, "repo-arch-dir", architecture)
 	}
 
-	pm.config.infoLog("Syncing packages for repository: %s", targetRepo)
+	cfg.APIDir = getStringFlag(cmd, "api-dir", "api")
+	cfg.GitLabToken = getStringFlag(cmd, "gitlab-token", "")
+	if cfg.GitLabToken == "" {
+		cfg.GitLabToken = os.Getenv("GITLAB_TOKEN")
+	}
 
-	gitlabPackages, err := pm.fetchGitLabPackages(packagesConfig.GitLabProjects, targetRepo)
+	cfg.Debug, _ = cmd.Flags().GetBool("debug")
+	cfg.Verbose, _ = cmd.Flags().GetBool("verbose")
+
+	cfg.debugLog("Config initialized: repo=%s, db=%s, target=%s, dir=%s",
+		cfg.RepoName, cfg.dbBaseName, cfg.targetRepo, cfg.RepoArchDir)
+
+	return cfg, nil
+}
+
+// Package sync operations
+func (pm *PackageManager) syncPackages(packagesConfig *PackagesConfig) error {
+	pm.config.infoLog("Syncing packages for repository: %s", pm.config.getTargetRepo())
+
+	gitlabPackages, err := pm.fetchGitLabPackages(packagesConfig.GitLabProjects)
 	if err != nil {
 		return fmt.Errorf("failed to fetch packages from GitLab releases: %w", err)
 	}
 
-	remotePackages, err := pm.fetchRemoteURLPackages(packagesConfig.RemoteURLs, targetRepo)
+	remotePackages, err := pm.fetchRemoteURLPackages(packagesConfig.RemoteURLs)
 	if err != nil {
 		return fmt.Errorf("failed to fetch remote URL packages: %w", err)
 	}
@@ -390,8 +317,9 @@ func sortReleasesByDate(releases []*gitlab.Release) {
 	})
 }
 
-func (pm *PackageManager) fetchGitLabPackages(projects []GitLabProject, targetRepo string) ([]RemotePackage, error) {
+func (pm *PackageManager) fetchGitLabPackages(projects []GitLabProject) ([]RemotePackage, error) {
 	var packages []RemotePackage
+	targetRepo := pm.config.getTargetRepo()
 
 	if pm.gitlabClient == nil {
 		pm.config.infoLog("No GitLab client available, skipping GitLab packages")
@@ -405,7 +333,6 @@ func (pm *PackageManager) fetchGitLabPackages(projects []GitLabProject, targetRe
 
 		pm.config.verboseLog("Fetching releases for project: %s (%s)", project.Name, project.ID)
 
-		// Get ALL releases (we need history for version handling)
 		var allReleases []*gitlab.Release
 		page := 1
 		for {
@@ -425,35 +352,28 @@ func (pm *PackageManager) fetchGitLabPackages(projects []GitLabProject, targetRe
 			continue
 		}
 
-		// Sort by creation date (newest first)
 		sortReleasesByDate(allReleases)
 
-		// Check if project is in BOTH repositories
 		isDualRepo := containsRepository(project.Repository, "stable") &&
 			containsRepository(project.Repository, "testing")
 
 		var releaseToUse *gitlab.Release
 		if isDualRepo {
 			if targetRepo == "testing" {
-				// Testing gets latest version
 				releaseToUse = allReleases[0]
 				pm.config.verboseLog("Using LATEST version for testing: %s", releaseToUse.Name)
 			} else if targetRepo == "stable" && len(allReleases) > 1 {
-				// Stable gets PREVIOUS version (if available)
 				releaseToUse = allReleases[1]
 				pm.config.verboseLog("Using PREVIOUS version for stable: %s", releaseToUse.Name)
 			} else {
-				// Not enough versions for stable in dual-repo mode
 				pm.config.verboseLog("Skipping project %s for stable (needs at least 2 releases)", project.Name)
 				continue
 			}
 		} else {
-			// Single-repo project: always use latest
 			releaseToUse = allReleases[0]
 			pm.config.verboseLog("Using LATEST version (single repo): %s", releaseToUse.Name)
 		}
 
-		// Process assets from selected release
 		for _, asset := range releaseToUse.Assets.Links {
 			if strings.HasSuffix(asset.Name, ".pkg.tar.zst") && strings.HasPrefix(asset.URL, "https") {
 				packages = append(packages, RemotePackage{
@@ -470,8 +390,9 @@ func (pm *PackageManager) fetchGitLabPackages(projects []GitLabProject, targetRe
 	return packages, nil
 }
 
-func (pm *PackageManager) fetchRemoteURLPackages(remoteURLs []RemoteURL, targetRepo string) ([]RemotePackage, error) {
+func (pm *PackageManager) fetchRemoteURLPackages(remoteURLs []RemoteURL) ([]RemotePackage, error) {
 	var packages []RemotePackage
+	targetRepo := pm.config.getTargetRepo()
 
 	for _, remote := range remoteURLs {
 		if !remote.Enabled || remote.Repository != targetRepo {
@@ -587,13 +508,15 @@ func (pm *PackageManager) updateRepoDatabase() error {
 		}
 	}()
 
+	// Remove only right DB names
 	dbFiles := []string{
-		pm.config.RepoName + ".db",
-		pm.config.RepoName + ".db.tar.gz",
-		pm.config.RepoName + ".files",
-		pm.config.RepoName + ".files.tar.gz",
+		pm.config.dbBaseName + ".db",
+		pm.config.getDBName(),
+		pm.config.dbBaseName + ".files",
+		pm.config.getFilesName(),
 	}
 
+	pm.config.debugLog("Removing old database files for: %s", pm.config.dbBaseName)
 	for _, file := range dbFiles {
 		os.Remove(file)
 	}
@@ -604,7 +527,8 @@ func (pm *PackageManager) updateRepoDatabase() error {
 	}
 
 	if len(matches) > 0 {
-		args := append([]string{pm.config.RepoName + ".db.tar.gz"}, matches...)
+		dbName := pm.config.getDBName()
+		args := append([]string{dbName}, matches...)
 		cmd := exec.Command("repo-add", args...)
 		if pm.config.Debug || pm.config.Verbose {
 			cmd.Stdout = os.Stdout
@@ -613,17 +537,18 @@ func (pm *PackageManager) updateRepoDatabase() error {
 		if err := cmd.Run(); err != nil {
 			return fmt.Errorf("failed to run repo-add: %w", err)
 		}
-		pm.config.infoLog("Updated repository database with %d packages", len(matches))
+		pm.config.infoLog("Updated repository database %s with %d packages", dbName, len(matches))
 	} else {
-		os.WriteFile(pm.config.RepoName+".db.tar.gz", []byte{}, 0644)
-		os.WriteFile(pm.config.RepoName+".files.tar.gz", []byte{}, 0644)
+		os.WriteFile(pm.config.getDBName(), []byte{}, 0644)
+		os.WriteFile(pm.config.getFilesName(), []byte{}, 0644)
 		pm.config.infoLog("Created empty repository database")
 	}
 
-	os.Remove(pm.config.RepoName + ".db")
-	os.Remove(pm.config.RepoName + ".files")
-	os.Symlink(pm.config.RepoName+".db.tar.gz", pm.config.RepoName+".db")
-	os.Symlink(pm.config.RepoName+".files.tar.gz", pm.config.RepoName+".files")
+	// Initialization of symbolic link
+	os.Remove(pm.config.dbBaseName + ".db")
+	os.Remove(pm.config.dbBaseName + ".files")
+	os.Symlink(pm.config.getDBName(), pm.config.dbBaseName+".db")
+	os.Symlink(pm.config.getFilesName(), pm.config.dbBaseName+".files")
 
 	return nil
 }
@@ -636,10 +561,7 @@ func (pm *PackageManager) generatePackagesJSON() error {
 		return fmt.Errorf("failed to read repository directory: %w", err)
 	}
 
-	targetRepo := "stable"
-	if pm.config.TestingMode {
-		targetRepo = "testing"
-	}
+	targetRepo := pm.config.getTargetRepo()
 
 	for _, file := range files {
 		if !file.IsDir() && strings.HasSuffix(file.Name(), ".pkg.tar.zst") {
@@ -720,6 +642,97 @@ func (pm *PackageManager) extractPackageInfo(pkgPath string) (*PackageInfo, erro
 	return info, nil
 }
 
+// Config management
+func readPackagesConfig() (*PackagesConfig, error) {
+	configFile := "packages_config.yaml"
+
+	if _, err := os.Stat(configFile); os.IsNotExist(err) {
+		defaultConfig := &PackagesConfig{
+			GitLabProjects: []GitLabProject{
+				{
+					ID:         "12345",
+					Name:       "example-package",
+					Repository: "stable",
+					Enabled:    true,
+				},
+			},
+			RemoteURLs: []RemoteURL{
+				{
+					URL:        "https://example.com/package.pkg.tar.zst",
+					Repository: "stable",
+					Enabled:    true,
+				},
+			},
+		}
+
+		data, err := yaml.Marshal(defaultConfig)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal default config: %w", err)
+		}
+
+		if err := os.WriteFile(configFile, data, 0644); err != nil {
+			return nil, fmt.Errorf("failed to create default config: %w", err)
+		}
+
+		fmt.Printf("Created default config file: %s\n", configFile)
+		fmt.Println("Please edit the config file and run the command again.")
+		return defaultConfig, nil
+	}
+
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read config file: %w", err)
+	}
+
+	var config PackagesConfig
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		return nil, fmt.Errorf("failed to parse config file: %w", err)
+	}
+
+	return &config, nil
+}
+
+func runPackageManagement(cfg *Config) error {
+	cfg.debugLog("Starting with config: %+v", cfg)
+
+	packagesConfig, err := readPackagesConfig()
+	if err != nil {
+		return fmt.Errorf("failed to read packages configuration: %w", err)
+	}
+
+	pm, err := NewPackageManager(cfg)
+	if err != nil {
+		return err
+	}
+
+	fileMgr := NewFileManager(cfg)
+
+	if err := fileMgr.createDirectories(); err != nil {
+		return err
+	}
+
+	if err := pm.syncPackages(packagesConfig); err != nil {
+		return err
+	}
+
+	fmt.Println("Package management completed successfully.")
+	return nil
+}
+
+// Commands
+var RootCmd = &cobra.Command{
+	Use:   "package-manager",
+	Short: "Manages the PrismLinux package repository",
+	Long:  `CLI tool to manage PrismLinux package repository. Syncs packages, updates repo DB, generates metadata for web UI.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		cfg, err := NewConfig(cmd)
+		if err != nil {
+			return err
+		}
+		return runPackageManagement(cfg)
+	},
+}
+
 var statusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show repository structure and current status",
@@ -728,7 +741,6 @@ var statusCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-
 		return showRepositoryStatus(cfg)
 	},
 }
@@ -737,12 +749,8 @@ func showRepositoryStatus(cfg *Config) error {
 	fmt.Println("=== PrismLinux Repository Structure ===")
 	fmt.Println()
 
-	targetRepo := "stable"
-	if cfg.TestingMode {
-		targetRepo = "testing"
-	}
-
-	fmt.Printf("Current mode: %s repository\n", targetRepo)
+	fmt.Printf("Current mode: %s repository\n", cfg.getTargetRepo())
+	fmt.Printf("Database name: %s\n", cfg.dbBaseName)
 	fmt.Printf("Architecture directory: %s\n", cfg.RepoArchDir)
 	fmt.Printf("API directory: %s\n", cfg.APIDir)
 	fmt.Println()
@@ -754,7 +762,7 @@ func showRepositoryStatus(cfg *Config) error {
 		}
 
 		packageCount := 0
-		fmt.Printf("=== Packages in %s repository ===\n", targetRepo)
+		fmt.Printf("=== Packages in %s repository ===\n", cfg.getTargetRepo())
 		for _, file := range files {
 			if !file.IsDir() && strings.HasSuffix(file.Name(), ".pkg.tar.zst") {
 				info, _ := file.Info()
@@ -770,6 +778,27 @@ func showRepositoryStatus(cfg *Config) error {
 		}
 	} else {
 		fmt.Printf("Repository directory does not exist: %s\n", cfg.RepoArchDir)
+	}
+	fmt.Println()
+
+	fmt.Println("=== Database Files ===")
+	dbFiles := []string{
+		cfg.dbBaseName + ".db",
+		cfg.getDBName(),
+		cfg.dbBaseName + ".files",
+		cfg.getFilesName(),
+	}
+	for _, dbFile := range dbFiles {
+		dbPath := filepath.Join(cfg.RepoArchDir, dbFile)
+		if info, err := os.Stat(dbPath); err == nil {
+			linkInfo := ""
+			if info.Mode()&os.ModeSymlink != 0 {
+				if target, err := os.Readlink(dbPath); err == nil {
+					linkInfo = fmt.Sprintf(" -> %s", target)
+				}
+			}
+			fmt.Printf("  %s (%s)%s\n", dbFile, formatSize(info.Size()), linkInfo)
+		}
 	}
 	fmt.Println()
 
@@ -818,11 +847,8 @@ var cleanCmd = &cobra.Command{
 
 		fileMgr := NewFileManager(cfg)
 
-		repoType := "stable"
-		if cfg.TestingMode {
-			repoType = "testing"
-		}
-		fmt.Printf("Starting cleanup mode for %s repository...\n", repoType)
+		fmt.Printf("Starting cleanup mode for %s repository...\n", cfg.getTargetRepo())
+		fmt.Printf("Database: %s\n", cfg.dbBaseName)
 
 		if err := fileMgr.removeAllPackages(); err != nil {
 			return fmt.Errorf("failed to remove packages: %w", err)
@@ -842,6 +868,7 @@ var cleanCmd = &cobra.Command{
 }
 
 func init() {
+	// Root command flags
 	RootCmd.Flags().String("repo-name", "prismlinux", "Repository name")
 	RootCmd.Flags().String("arch", "x86_64", "Target architecture")
 	RootCmd.Flags().String("repo-arch-dir", "", "Architecture-specific repo directory (auto-determined)")
@@ -851,9 +878,7 @@ func init() {
 	RootCmd.Flags().Bool("debug", false, "Enable debug output")
 	RootCmd.Flags().Bool("verbose", false, "Enable verbose output")
 
-	RootCmd.AddCommand(cleanCmd)
-	RootCmd.AddCommand(statusCmd)
-
+	// Clean command flags
 	cleanCmd.Flags().String("repo-name", "prismlinux", "Repository name")
 	cleanCmd.Flags().String("arch", "x86_64", "Target architecture")
 	cleanCmd.Flags().String("repo-arch-dir", "", "Architecture-specific repo directory (auto-determined)")
@@ -862,11 +887,15 @@ func init() {
 	cleanCmd.Flags().Bool("debug", false, "Enable debug output")
 	cleanCmd.Flags().Bool("verbose", false, "Enable verbose output")
 
+	// Status command flags
 	statusCmd.Flags().String("repo-name", "prismlinux", "Repository name")
 	statusCmd.Flags().String("arch", "x86_64", "Target architecture")
 	statusCmd.Flags().String("repo-arch-dir", "", "Architecture-specific repo directory (auto-determined)")
 	statusCmd.Flags().String("api-dir", "api", "API directory for metadata")
 	statusCmd.Flags().Bool("testing", false, "Show testing repository status")
+
+	RootCmd.AddCommand(cleanCmd)
+	RootCmd.AddCommand(statusCmd)
 }
 
 func main() {

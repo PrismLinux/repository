@@ -18,6 +18,10 @@ gitlab_projects:
     name: "Crystallize GUI"
     repository: "testing;stable"
     enabled: true
+  - id: 74640851
+    name: "PrismLinux ISO"
+    repository: "stable"
+    enabled: true
 
   # Branding
   - id: 71182518
