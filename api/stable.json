@@ -228,6 +228,18 @@
     "repository": "stable"
   },
   {
+    "name": "prismlinux-iso",
+    "version": "0.1.0-1",
+    "description": "Performance-optimized build with proper dependency tracking",
+    "architecture": "x86_64",
+    "filename": "prismlinux-iso-0.1.0-1-x86_64.pkg.tar.zst",
+    "size": "1354899",
+    "modified": "2025-10-01 15:33:56",
+    "depends": "arch-install-scripts  util-linux",
+    "groups": "None",
+    "repository": "stable"
+  },
+  {
     "name": "prismlinux-mirrorlist",
     "version": "2025.8-1",
     "description": "PrismLinux mirrorlist",
