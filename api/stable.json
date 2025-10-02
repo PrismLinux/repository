@@ -132,6 +132,18 @@
     "repository": "stable"
   },
   {
+    "name": "pkgbuild-manager",
+    "version": "0.1.0-1",
+    "description": "A reliable tool for building Arch Linux/PrismLinux packages in GitLab CI",
+    "architecture": "x86_64",
+    "filename": "pkgbuild-manager-0.1.0-1-x86_64.pkg.tar.zst",
+    "size": "2460249",
+    "modified": "2025-10-02 13:34:31",
+    "depends": "arch-install-scripts  util-linux",
+    "groups": "None",
+    "repository": "stable"
+  },
+  {
     "name": "prism",
     "version": "0.1.5-1",
     "description": "A fast and efficient AUR helper For Prism Linux",
