@@ -102,10 +102,6 @@ gitlab_projects:
     enabled: true
 
 remote_urls:
-  # Kernel
-  - url: "https://github.com/Frogging-Family/linux-tkg/releases/download/v6.17/linux617-tkg-bore-llvm-6.17.0-273-x86_64.pkg.tar.zst"
-    repository: "stable"
-    enabled: true
-  - url: "https://github.com/Frogging-Family/linux-tkg/releases/download/v6.17/linux617-tkg-bore-llvm-headers-6.17.0-273-x86_64.pkg.tar.zst"
-    repository: "stable"
-    enabled: true
+  #- url: "https://github.com/Frogging-Family/linux-tkg/releases/download/v6.17/linux617-tkg-bore-llvm-6.17.0-273-x86_64.pkg.tar.zst"
+  #  repository: "stable"
+  #  enabled: true
