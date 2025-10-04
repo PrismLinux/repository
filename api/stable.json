@@ -13,12 +13,12 @@
   },
   {
     "name": "crystallize-cli",
-    "version": "0.3.1-1",
+    "version": "0.3.1-2",
     "description": "CLI version of Crystallize Installer",
     "architecture": "x86_64",
-    "filename": "crystallize-cli-0.3.1-1-x86_64.pkg.tar.zst",
-    "size": "1590703",
-    "modified": "2025-10-04 12:41:15",
+    "filename": "crystallize-cli-0.3.1-2-x86_64.pkg.tar.zst",
+    "size": "1590958",
+    "modified": "2025-10-04 19:43:39",
     "depends": "arch-install-scripts  util-linux",
     "groups": "None",
     "repository": "stable"
