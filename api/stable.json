@@ -25,12 +25,12 @@
   },
   {
     "name": "crystallize-gui",
-    "version": "0.3.0-3",
+    "version": "0.3.1-0",
     "description": "GUI version of Crystallize Installer",
     "architecture": "x86_64",
-    "filename": "crystallize-gui-0.3.0-3-x86_64.pkg.tar.zst",
-    "size": "95781",
-    "modified": "2025-10-04 12:41:13",
+    "filename": "crystallize-gui-0.3.1-0-x86_64.pkg.tar.zst",
+    "size": "95824",
+    "modified": "2025-10-04 12:51:24",
     "depends": "python  python-gobject  python-psutil  gtk4  libadwaita  python-cairo  openssl  python-pytz  gnome-disk-utility  glibc-locales  vte4  meson  ninja  libadwaita  desktop-file-utils  appstream-glib  python-urllib3  python-tzlocal  python-requests  gtksourceview5  python-regex",
     "groups": "None",
     "repository": "stable"
@@ -92,30 +92,6 @@
     "size": "3859403",
     "modified": "2025-09-28 17:39:43",
     "depends": "None",
-    "groups": "None",
-    "repository": "stable"
-  },
-  {
-    "name": "linux617-tkg-bore-llvm",
-    "version": "6.17.0-273",
-    "description": "The Linux-tkg kernel and modules - https://github.com/Frogging-Family/linux-tkg",
-    "architecture": "x86_64",
-    "filename": "linux617-tkg-bore-llvm-6.17.0-273-x86_64.pkg.tar.zst",
-    "size": "53758490",
-    "modified": "2025-10-04 12:41:14",
-    "depends": "coreutils  kmod  initramfs",
-    "groups": "None",
-    "repository": "stable"
-  },
-  {
-    "name": "linux617-tkg-bore-llvm-headers",
-    "version": "6.17.0-273",
-    "description": "Headers and scripts for building modules for the Linux-tkg kernel - https://github.com/Frogging-Family/linux-tkg",
-    "architecture": "x86_64",
-    "filename": "linux617-tkg-bore-llvm-headers-6.17.0-273-x86_64.pkg.tar.zst",
-    "size": "41587425",
-    "modified": "2025-10-04 12:41:15",
-    "depends": "pahole",
     "groups": "None",
     "repository": "stable"
   },
