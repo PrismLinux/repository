@@ -14,11 +14,11 @@ gitlab_projects:
   # Installer
   - id: "71409077"
     name: "Crystallize CLI"
-    repository: "testing;stable"
+    repository: "stable"
     enabled: true
   - id: "71565033"
     name: "Crystallize GUI"
-    repository: "testing;stable"
+    repository: "stable"
     enabled: true
   - id: "74640851"
     name: "PrismLinux ISO"
@@ -103,9 +103,9 @@ gitlab_projects:
 
 remote_urls:
   # Kernel
-  - url: "https://github.com/Frogging-Family/linux-tkg/releases/download/v6.16.9/linux616-tkg-bore-llvm-6.16.9-273-x86_64.pkg.tar.zst"
+  - url: "https://github.com/Frogging-Family/linux-tkg/releases/download/v6.17/linux617-tkg-bore-llvm-6.17.0-273-x86_64.pkg.tar.zst"
     repository: "stable"
     enabled: true
-  - url: "https://github.com/Frogging-Family/linux-tkg/releases/download/v6.16.9/linux616-tkg-bore-llvm-headers-6.16.9-273-x86_64.pkg.tar.zst"
+  - url: "https://github.com/Frogging-Family/linux-tkg/releases/download/v6.17/linux617-tkg-bore-llvm-headers-6.17.0-273-x86_64.pkg.tar.zst"
     repository: "stable"
     enabled: true
