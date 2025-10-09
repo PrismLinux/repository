@@ -15,7 +15,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-image: registry.gitlab.com/crystalnetwork-studio/dev-tooling/docker/pkgbuild-archlinux:latest
+image: ghcr.io/crystalnetwork-studio/archlinux-builder:latest
 
 variables:
   REPO_NAME: "prismlinux"
