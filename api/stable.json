@@ -1,12 +1,12 @@
 [
   {
     "name": "about",
-    "version": "0.1.0-1",
+    "version": "0.1.1-1",
     "description": "About application for PrismLinux distribution.",
     "architecture": "x86_64",
-    "filename": "about-0.1.0-1-x86_64.pkg.tar.zst",
-    "size": "7266",
-    "modified": "2025-09-25 15:58:19",
+    "filename": "about-0.1.1-1-x86_64.pkg.tar.zst",
+    "size": "6859",
+    "modified": "2025-10-09 17:57:03",
     "depends": "gtk4  libadwaita  glib2",
     "groups": "None",
     "repository": "stable"
@@ -109,12 +109,12 @@
   },
   {
     "name": "pkgbuild-manager",
-    "version": "0.1.0-1",
+    "version": "0.1.1-1",
     "description": "A reliable tool for building Arch Linux/PrismLinux packages in GitLab CI",
     "architecture": "x86_64",
-    "filename": "pkgbuild-manager-0.1.0-1-x86_64.pkg.tar.zst",
-    "size": "2460249",
-    "modified": "2025-10-02 13:34:31",
+    "filename": "pkgbuild-manager-0.1.1-1-x86_64.pkg.tar.zst",
+    "size": "2462111",
+    "modified": "2025-10-09 17:57:03",
     "depends": "arch-install-scripts  util-linux",
     "groups": "None",
     "repository": "stable"
@@ -229,12 +229,12 @@
   },
   {
     "name": "prismlinux-mirrorlist",
-    "version": "2025.8-1",
+    "version": "2025.10-1",
     "description": "PrismLinux mirrorlist",
     "architecture": "any",
-    "filename": "prismlinux-mirrorlist-2025.8-1-any.pkg.tar.zst",
-    "size": "2783",
-    "modified": "2025-09-21 10:09:47",
+    "filename": "prismlinux-mirrorlist-2025.10-1-any.pkg.tar.zst",
+    "size": "2771",
+    "modified": "2025-10-09 17:57:04",
     "depends": "None",
     "groups": "prismlinux",
     "repository": "stable"
