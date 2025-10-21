@@ -1,17 +1,5 @@
 [
   {
-    "name": "about",
-    "version": "0.1.1-1",
-    "description": "About application for PrismLinux distribution.",
-    "architecture": "x86_64",
-    "filename": "about-0.1.1-1-x86_64.pkg.tar.zst",
-    "size": "6859",
-    "modified": "2025-10-09 17:57:03",
-    "depends": "gtk4  libadwaita  glib2",
-    "groups": "None",
-    "repository": "stable"
-  },
-  {
     "name": "crystallize-cli",
     "version": "0.3.1-2",
     "description": "CLI version of Crystallize Installer",
@@ -36,6 +24,18 @@
     "repository": "stable"
   },
   {
+    "name": "about",
+    "version": "0.1.1-1",
+    "description": "About application for PrismLinux distribution.",
+    "architecture": "x86_64",
+    "filename": "about-0.1.1-1-x86_64.pkg.tar.zst",
+    "size": "6859",
+    "modified": "2025-10-09 17:57:03",
+    "depends": "gtk4  libadwaita  glib2",
+    "groups": "None",
+    "repository": "stable"
+  },
+  {
     "name": "grub",
     "version": "2.122b-1",
     "description": "GNU GRand Unified Bootloader (2)",
@@ -44,6 +44,18 @@
     "size": "15529013",
     "modified": "2025-09-21 10:09:46",
     "depends": "sh  xz  gettext  device-mapper  grub-update",
+    "groups": "None",
+    "repository": "stable"
+  },
+  {
+    "name": "illogical-impulse-microtex-git",
+    "version": "r494.0e3707f-2",
+    "description": "MicroTeX for illogical-impulse dotfiles.",
+    "architecture": "x86_64",
+    "filename": "illogical-impulse-microtex-git-r494.0e3707f-2-x86_64.pkg.tar.zst",
+    "size": "1192198",
+    "modified": "2025-09-28 17:39:44",
+    "depends": "tinyxml2  gtkmm3  gtksourceviewmm  cairomm",
     "groups": "None",
     "repository": "stable"
   },
@@ -72,26 +84,14 @@
     "repository": "stable"
   },
   {
-    "name": "illogical-impulse-microtex-git",
-    "version": "r494.0e3707f-2",
-    "description": "MicroTeX for illogical-impulse dotfiles.",
+    "name": "pkgbuild-manager",
+    "version": "0.1.1-1",
+    "description": "A reliable tool for building Arch Linux/PrismLinux packages in GitLab CI",
     "architecture": "x86_64",
-    "filename": "illogical-impulse-microtex-git-r494.0e3707f-2-x86_64.pkg.tar.zst",
-    "size": "1192198",
-    "modified": "2025-09-28 17:39:44",
-    "depends": "tinyxml2  gtkmm3  gtksourceviewmm  cairomm",
-    "groups": "None",
-    "repository": "stable"
-  },
-  {
-    "name": "illogical-impulse-oneui4-icons-git",
-    "version": "r71.693095d-1",
-    "description": "A fork of mjkim0727/OneUI4-Icons for illogical-impulse dotfiles.",
-    "architecture": "x86_64",
-    "filename": "illogical-impulse-oneui4-icons-git-r71.693095d-1-x86_64.pkg.tar.zst",
-    "size": "3859403",
-    "modified": "2025-09-28 17:39:43",
-    "depends": "None",
+    "filename": "pkgbuild-manager-0.1.1-1-x86_64.pkg.tar.zst",
+    "size": "2462111",
+    "modified": "2025-10-09 17:57:03",
+    "depends": "arch-install-scripts  util-linux",
     "groups": "None",
     "repository": "stable"
   },
@@ -104,18 +104,6 @@
     "size": "999097",
     "modified": "2025-10-05 13:16:53",
     "depends": "base-devel  fakeroot  git  openssl  curl  jq  debugedit  which",
-    "groups": "None",
-    "repository": "stable"
-  },
-  {
-    "name": "pkgbuild-manager",
-    "version": "0.1.1-1",
-    "description": "A reliable tool for building Arch Linux/PrismLinux packages in GitLab CI",
-    "architecture": "x86_64",
-    "filename": "pkgbuild-manager-0.1.1-1-x86_64.pkg.tar.zst",
-    "size": "2462111",
-    "modified": "2025-10-09 17:57:03",
-    "depends": "arch-install-scripts  util-linux",
     "groups": "None",
     "repository": "stable"
   },
@@ -157,25 +145,13 @@
   },
   {
     "name": "prismlinux-gaming-meta",
-    "version": "1.1-1",
+    "version": "1.1-2",
     "description": "Meta package for Gaming dependencies",
     "architecture": "any",
-    "filename": "prismlinux-gaming-meta-1.1-1-any.pkg.tar.zst",
-    "size": "11103",
-    "modified": "2025-09-21 10:09:47",
-    "depends": "alsa-plugins  giflib  glfw  gst-plugins-base-libs  lib32-alsa-plugins  lib32-giflib  lib32-gst-plugins-base-libs  lib32-gtk3  lib32-libjpeg-turbo  lib32-libva  lib32-mpg123  lib32-ocl-icd  lib32-opencl-icd-loader  lib32-openal  lib32-mesa-tkg-git  libjpeg-turbo  libva  libxslt  mpg123  opencl-icd-loader  openal  proton-ge-custom-bin  protontricks  ttf-liberation  winetricks  wine  vulkan-tools",
-    "groups": "None",
-    "repository": "stable"
-  },
-  {
-    "name": "prismlinux-gnome-settings",
-    "version": "1.1-1",
-    "description": "PrismLinux GNOME settings",
-    "architecture": "any",
-    "filename": "prismlinux-gnome-settings-1.1-1-any.pkg.tar.zst",
-    "size": "10101",
-    "modified": "2025-09-21 10:09:47",
-    "depends": "capitaine-cursors  gnome-autoar  gnome-backgrounds  gnome-browser-connector  gnome-bluetooth-3.0  gnome-calculator  gnome-color-manager  gnome-control-center  gnome-desktop  gnome-desktop-4  gnome-desktop-common  gnome-disk-utility  gnome-firmware  gnome-keyring  gnome-online-accounts  gnome-session  gnome-settings-daemon  gnome-shell  gnome-shell-extensions  gnome-shell-extension-appindicator  gnome-console  gnome-themes-extra  gnome-tweaks  kvantum  qt6ct",
+    "filename": "prismlinux-gaming-meta-1.1-2-any.pkg.tar.zst",
+    "size": "4548",
+    "modified": "2025-10-21 19:27:07",
+    "depends": "alsa-plugins  giflib  glfw  gst-plugins-base-libs  lib32-alsa-plugins  lib32-giflib  lib32-gst-plugins-base-libs  lib32-gtk3  lib32-libjpeg-turbo  lib32-libva  lib32-mpg123  lib32-ocl-icd  lib32-opencl-icd-loader  lib32-openal  lib32-mesa  libjpeg-turbo  libva  libxslt  mpg123  opencl-icd-loader  openal  proton-ge-custom-bin  protontricks  ttf-liberation  winetricks  wine  vulkan-tools",
     "groups": "None",
     "repository": "stable"
   },
@@ -188,6 +164,18 @@
     "size": "3280",
     "modified": "2025-09-28 17:39:43",
     "depends": "mesa  vulkan-intel  vulkan-radeon  vulkan-nouveau  xf86-video-amdgpu  xf86-video-intel  xf86-video-nouveau  xf86-video-vesa  vulkan-icd-loader  vulkan-tools",
+    "groups": "None",
+    "repository": "stable"
+  },
+  {
+    "name": "prismlinux-gnome-settings",
+    "version": "1.1-1",
+    "description": "PrismLinux GNOME settings",
+    "architecture": "any",
+    "filename": "prismlinux-gnome-settings-1.1-1-any.pkg.tar.zst",
+    "size": "10101",
+    "modified": "2025-09-21 10:09:47",
+    "depends": "capitaine-cursors  gnome-autoar  gnome-backgrounds  gnome-browser-connector  gnome-bluetooth-3.0  gnome-calculator  gnome-color-manager  gnome-control-center  gnome-desktop  gnome-desktop-4  gnome-desktop-common  gnome-disk-utility  gnome-firmware  gnome-keyring  gnome-online-accounts  gnome-session  gnome-settings-daemon  gnome-shell  gnome-shell-extensions  gnome-shell-extension-appindicator  gnome-console  gnome-themes-extra  gnome-tweaks  kvantum  qt6ct",
     "groups": "None",
     "repository": "stable"
   },
@@ -295,6 +283,18 @@
     "filename": "prismlinux-themes-grub-1.1-1-x86_64.pkg.tar.zst",
     "size": "4763725",
     "modified": "2025-09-21 10:09:47",
+    "depends": "None",
+    "groups": "None",
+    "repository": "stable"
+  },
+  {
+    "name": "illogical-impulse-oneui4-icons-git",
+    "version": "r71.693095d-1",
+    "description": "A fork of mjkim0727/OneUI4-Icons for illogical-impulse dotfiles.",
+    "architecture": "x86_64",
+    "filename": "illogical-impulse-oneui4-icons-git-r71.693095d-1-x86_64.pkg.tar.zst",
+    "size": "3859403",
+    "modified": "2025-09-28 17:39:43",
     "depends": "None",
     "groups": "None",
     "repository": "stable"
