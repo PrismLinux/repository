@@ -101,11 +101,11 @@ gitlab_projects:
     repository: "stable"
     enabled: true
 
-  # AUR Packages
-  - id: "75494313"
-    name: "Helium Browser"
-    repository: "stable"
-    enabled: true
+  # # AUR Packages
+  # - id: "75494313"
+  #   name: "Helium Browser"
+  #   repository: "stable"
+  #   enabled: true
 
 remote_urls:
   - url: "https://repository.prismlinux.org/smth.pkg.tar.zst"
